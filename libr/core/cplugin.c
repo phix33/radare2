@@ -61,7 +61,7 @@ R_API bool r_core_plugin_remove(RCmd *cmd, RCorePlugin *plugin) {
 	bool res = false;
 	r_list_foreach_safe (cmd->lcmds, iter, iter2, cps) {
 		if (cps && !strcmp (name, cps->plugin->meta.name)) {
-			r_list_delete (cmd->plist, iter);
+			r_list_delete (cmd->lcmds, iter);
 			res = true;
 			break;
 		}
