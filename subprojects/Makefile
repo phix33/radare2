@@ -1,6 +1,9 @@
-.PHONY: default all clean
+.PHONY: default distdeps all clean
 
 -include ../config-user.mk
+
+# automatically set to 1 on dist tarball creation
+PREDOWNLOADED=0
 
 DEPS=sdb
 
@@ -36,13 +39,23 @@ ifeq ($(WANT_BUNDLED_CAPSTONE),1)
   endif
 endif
 
-ALL=$(basename $(wildcard *.mk))
+DISTDEPS=binaryninja capstone-v5 otezip qjs sdb
+EXTRADEPS=capstone-next capstone-v4
+ALLDEPS=$(DISTDEPS) $(EXTRADEPS)
 
-default: $(DEPS)
+ifeq ($(PREDOWNLOADED),1)
+	FINALDEPS=$(filter-out $(DISTDEPS), $(DEPS))
+else
+	FINALDEPS=$(DEPS)
+endif
 
-all: $(DEPS)
+default: $(FINALDEPS)
+
+distdeps: $(DISTDEPS)
+
+all: $(ALLDEPS)
 
 clean:
-	rm -rf $(ALL)
+	rm -rf $(ALLDEPS)
 
-include $(addsuffix .mk,$(DEPS))
+include $(addsuffix .mk, $(ALLDEPS))
