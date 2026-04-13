@@ -603,7 +603,7 @@ R_API void r_anal_function_context_free(RAnalFcnContext *ctx) {
 	}
 	r_anal_function_signature_free (ctx->signature);
 	r_list_free (ctx->reg_args);
-	r_list_free (ctx->slots);
+	r_list_free (ctx->fcn_slots);
 	free (ctx);
 }
 
@@ -619,8 +619,8 @@ R_API RAnalFcnContext *r_anal_function_context_collect(RAnal *anal, RAnalFunctio
 	ctx = R_NEW0 (RAnalFcnContext);
 	ctx->signature = fcn_context_collect_signature (fcn);
 	ctx->reg_args = r_list_newf ((RListFree)fcn_context_reg_arg_free);
-	ctx->slots = r_list_newf ((RListFree)fcn_context_slot_free);
-	if (!ctx->reg_args || !ctx->slots) {
+	ctx->fcn_slots = r_list_newf ((RListFree)fcn_context_slot_free);
+	if (!ctx->reg_args || !ctx->fcn_slots) {
 		r_anal_function_context_free (ctx);
 		return NULL;
 	}
@@ -650,7 +650,7 @@ R_API RAnalFcnContext *r_anal_function_context_collect(RAnal *anal, RAnalFunctio
 			r_anal_function_context_free (ctx);
 			return NULL;
 		}
-		r_list_append (ctx->slots, slot);
+		r_list_append (ctx->fcn_slots, slot);
 	}
 	r_list_foreach (cache.svars, iter, var) {
 		if (!var) {
@@ -663,7 +663,7 @@ R_API RAnalFcnContext *r_anal_function_context_collect(RAnal *anal, RAnalFunctio
 			r_anal_function_context_free (ctx);
 			return NULL;
 		}
-		r_list_append (ctx->slots, slot);
+		r_list_append (ctx->fcn_slots, slot);
 	}
 	r_anal_function_vars_cache_fini (&cache);
 	return ctx;

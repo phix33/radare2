@@ -315,7 +315,7 @@ typedef struct r_anal_fcn_slot_t {
 typedef struct r_anal_fcn_context_t {
 	RAnalFunctionSignature *signature;
 	RList *reg_args; // RList<RAnalFcnRegArg *>
-	RList *slots; // RList<RAnalFcnSlot *>
+	RList *fcn_slots; // RList<RAnalFcnSlot *>
 } RAnalFcnContext;
 
 typedef struct r_anal_diff_t {

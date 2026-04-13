@@ -40,7 +40,7 @@ static RAnalFcnSlot *find_stack_slot(RAnalFcnContext *ctx, const char *name) {
 	RListIter *iter;
 	RAnalFcnSlot *slot;
 
-	r_list_foreach (ctx->slots, iter, slot) {
+	r_list_foreach (ctx->fcn_slots, iter, slot) {
 		if (slot && slot->name && !strcmp (slot->name, name)) {
 			return slot;
 		}
