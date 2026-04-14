@@ -179,10 +179,6 @@ static bool esil2c_goto(REsil *esil) {
 	return true;
 }
 
-static void esil2c_free(REsilC *user) {
-	free (user);
-}
-
 static bool esil2c_mw(REsil *esil, ut64 addr, const ut8 *buf, int len) {
 	R_LOG_TODO ("poke%d 0x%08"PFMT64x" %d", len, addr, *buf);
 	return true;
@@ -195,8 +191,6 @@ static bool esil2c_mr(REsil *esil, ut64 addr, ut8 *buf, int len) {
 
 static void esil2c_setup(REsil *esil) {
 	R_RETURN_IF_FAIL (esil);
-	REsilC *user = R_NEW (REsilC);
-	esil->user = user;
 	esil->verbose = true; // r_config_get_b (core->config, "esil.verbose");
 	esil->cb.mem_read = esil2c_mr;
 	esil->cb.mem_write = esil2c_mw;
@@ -224,6 +218,8 @@ R_API REsilC *r_esil_toc_new(RAnal *anal, const int bits) {
 	int ss = 16 * 1024;
 	REsil *esil = r_esil_new (ss, 0, bits);
 	if (esil) {
+		esil->anal = anal;
+		esil->user = ec;
 		esil2c_setup (esil);
 		ec->anal = anal;
 		ec->esil = esil;
@@ -236,7 +232,6 @@ R_API REsilC *r_esil_toc_new(RAnal *anal, const int bits) {
 R_API void r_esil_toc_free(REsilC *ec) {
 	if (ec) {
 		if (ec->esil) {
-			esil2c_free (ec->esil->user);
 			ec->esil->user = NULL;
 			r_esil_free (ec->esil);
 		}
