@@ -903,7 +903,7 @@ repeat:
 		if (R_UNLIKELY (wordi > 62)) {
 			R_LOG_DEBUG ("Invalid esil string");
 			step_out (esil, esil->cmd_step_out);
-			return -1;
+			return false;
 		}
 		dorunword = 0;
 		if (*str == ';') {
