@@ -1950,7 +1950,6 @@ static bool esil_mem_modeq_n(REsil *esil, int bits) {
 			ret = !!esil_peek_n (esil, bits);
 			src1 = r_esil_pop (esil);
 			if (src1 && r_esil_get_parm (esil, src1, &d) && s >= 1) {
-				r_esil_pushnum (esil, d % s);
 				d = d % s;
 				r_esil_pushnum (esil, d);
 				r_esil_push (esil, dst);
