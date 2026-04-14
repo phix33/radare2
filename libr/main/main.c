@@ -27,10 +27,11 @@ static const RMain foo[] = {
 R_API RMain *r_main_new(const char *name) {
 	size_t i = 0;
 	while (foo[i].name) {
-		if (r_str_startswith (name, foo[i].name)) {
+		const RMain *entry = &foo[i];
+		if (r_str_startswith (name, entry->name)) {
 			RMain *m = R_NEW0 (RMain);
-			m->name = foo[i].name;
-			m->main = foo[i].main;
+			m->name = entry->name;
+			m->main = entry->main;
 			return m;
 		}
 		i++;
@@ -105,48 +106,44 @@ R_API bool r_main_r2_build_flags(char **out_cflags, char **out_ldflags) {
 		free (incdir);
 		return false;
 	}
-	if (!*out_cflags) {
-		*out_cflags = r_str_newf ("-I%s", incdir);
-	}
-	if (!*out_ldflags) {
-		RStrBuf *sb = r_strbuf_new ("");
-		const char *libs_default[] = {
-			"-lr_core",
-			"-lr_config",
-			"-lr_debug",
-			"-lr_bin",
-			"-lr_lang",
-			"-lr_anal",
-			"-lr_bp",
-			"-lr_egg",
-			"-lr_asm",
-			"-lr_flag",
-			"-lr_search",
-			"-lr_syscall",
-			"-lr_fs",
-			"-lr_io",
-			"-lr_socket",
-			"-lr_cons",
-			"-lr_magic",
-			"-lr_muta",
-			"-lr_arch",
-			"-lr_esil",
-			"-lr_reg",
-			"-lr_util",
-			NULL
-		};
-		if (sb) {
-			r_strbuf_appendf (sb, "-L%s", libdir);
-			int i = 0;
-			while (libs_default[i]) {
-				r_strbuf_appendf (sb, " %s", libs_default[i]);
-				i++;
-			}
-#if R2__UNIX__ && !__APPLE__
-			r_strbuf_append (sb, " -ldl");
-#endif
-			*out_ldflags = r_strbuf_drain (sb);
+	*out_cflags = r_str_newf ("-I%s", incdir);
+	RStrBuf *sb = r_strbuf_new ("");
+	const char *libs_default[] = {
+		"-lr_core",
+		"-lr_config",
+		"-lr_debug",
+		"-lr_bin",
+		"-lr_lang",
+		"-lr_anal",
+		"-lr_bp",
+		"-lr_egg",
+		"-lr_asm",
+		"-lr_flag",
+		"-lr_search",
+		"-lr_syscall",
+		"-lr_fs",
+		"-lr_io",
+		"-lr_socket",
+		"-lr_cons",
+		"-lr_magic",
+		"-lr_muta",
+		"-lr_arch",
+		"-lr_esil",
+		"-lr_reg",
+		"-lr_util",
+		NULL
+	};
+	if (sb) {
+		r_strbuf_appendf (sb, "-L%s", libdir);
+		int i = 0;
+		while (libs_default[i]) {
+			r_strbuf_appendf (sb, " %s", libs_default[i]);
+			i++;
 		}
+#if R2__UNIX__ && !__APPLE__
+		r_strbuf_append (sb, " -ldl");
+#endif
+		*out_ldflags = r_strbuf_drain (sb);
 	}
 	if (!*out_cflags) {
 		*out_cflags = strdup ("");

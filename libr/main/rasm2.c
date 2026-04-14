@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2009-2025 - pancake, nibble, maijin */
+/* radare - LGPL - Copyright 2009-2026 - pancake, nibble, maijin */
 
 #define R_LOG_ORIGIN "rasm2"
 
@@ -213,7 +213,7 @@ static void rarch2_list(RAsmState *as, const char *arch) {
 		pj = pj_new ();
 		pj_a (pj);
 	}
-	RList *plugins = as && as->anal? as->anal->arch->libstore->plugins: NULL;
+	RList *plugins = R_UNWRAP5 (as, anal, arch, libstore, plugins);
 	r_list_foreach (plugins, iter, h) {
 		if (arch && strcmp (arch, h->meta.name)) {
 			continue;
