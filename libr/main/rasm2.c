@@ -1052,10 +1052,10 @@ R_API int r_main_rasm2(int argc, const char *argv[]) {
 			}
 			len = (ut64)sz;
 			if (dis) {
-				if (skip && length > skip) {
+				if (skip && len > skip) {
 					if (as->opt.bin) {
-						memmove (buf, buf + skip, length - skip);
-						length -= skip;
+						memmove (buf, buf + skip, len - skip);
+						len -= skip;
 					}
 				}
 				ret = rasm_disasm (as, offset, (char *)buf, len, bits, dis - 1);
