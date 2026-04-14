@@ -189,8 +189,8 @@ static bool rafind_replace_at(RafindOptions *ro, ut64 addr, ut32 match_len) {
 		return false;
 	}
 	if (!ro->insert) {
-		if (ro->replen > match_len) {
-			R_LOG_WARN ("Replace string longer than match at 0x%08" PFMT64x, addr);
+		if ((ut32)ro->replen != match_len) {
+			R_LOG_WARN ("Replace string length (%d) differs from match length (%u) at 0x%08" PFMT64x ", use -g to insert", ro->replen, match_len, addr);
 			return false;
 		}
 		r_io_write_at (ro->io, addr, ro->repbuf, ro->replen);
