@@ -2218,16 +2218,24 @@ static bool esil_mem_lsreq_n(REsil *esil, int bits) {
 	char *src0 = r_esil_pop (esil);
 	char *src1 = NULL;
 	if (src0 && r_esil_get_parm (esil, src0, &s)) {
-		r_esil_push (esil, dst);
-		ret = (!!esil_peek_n (esil, bits));
-		src1 = r_esil_pop (esil);
-		if (src1 && r_esil_get_parm (esil, src1, &d)) {
-			d >>= s;
-			r_esil_pushnum (esil, d);
-			r_esil_push (esil, dst);
-			ret &= (!!esil_poke_n (esil, bits));
+		if (s > sizeof (ut64) * 8) {
+			R_LOG_DEBUG ("esil_mem_lsreq_n: shift is too big");
 		} else {
-			ret = false;
+			r_esil_push (esil, dst);
+			ret = (!!esil_peek_n (esil, bits));
+			src1 = r_esil_pop (esil);
+			if (src1 && r_esil_get_parm (esil, src1, &d)) {
+				if (s > 63) {
+					d = 0;
+				} else {
+					d >>= s;
+				}
+				r_esil_pushnum (esil, d);
+				r_esil_push (esil, dst);
+				ret &= (!!esil_poke_n (esil, bits));
+			} else {
+				ret = false;
+			}
 		}
 	}
 	if (!ret) {
