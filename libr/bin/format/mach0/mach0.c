@@ -107,14 +107,15 @@ static bool segment_filebacked_size(struct MACH0_(obj_t) * mo, int seg_idx, R_OU
 	if (seg_idx < 0 || seg_idx >= mo->nsegs) {
 		return false;
 	}
-	ut64 fileoff = mo->segs[seg_idx].fileoff;
-	ut64 filesize = mo->segs[seg_idx].filesize;
+	struct MACH0_(segment_command) *seg = &mo->segs[seg_idx];
+	ut64 fileoff = seg->fileoff;
+	ut64 filesize = seg->filesize;
 	if (fileoff > mo->size) {
 		return false;
 	}
 	ut64 max_filesize = mo->size - fileoff;
 	ut64 filebacked_size = R_MIN (filesize, max_filesize);
-	filebacked_size = R_MIN (filebacked_size, mo->segs[seg_idx].vmsize);
+	filebacked_size = R_MIN (filebacked_size, seg->vmsize);
 	*size = filebacked_size;
 	return true;
 }
@@ -161,10 +162,11 @@ static ut64 addr_to_offset(struct MACH0_(obj_t) * mo, ut64 addr) {
 	if (mo->segs) {
 		size_t i;
 		for (i = 0; i < mo->nsegs; i++) {
-			const ut64 segment_base = (ut64)mo->segs[i].vmaddr;
-			const ut64 segment_size = (ut64)mo->segs[i].vmsize;
+			struct MACH0_(segment_command) *seg = &mo->segs[i];
+			const ut64 segment_base = (ut64)seg->vmaddr;
+			const ut64 segment_size = (ut64)seg->vmsize;
 			if (addr >= segment_base && addr < segment_base + segment_size) {
-				return mo->segs[i].fileoff + (addr - segment_base);
+				return seg->fileoff + (addr - segment_base);
 			}
 		}
 	}
@@ -175,10 +177,11 @@ static ut64 offset_to_vaddr(struct MACH0_(obj_t) * mo, ut64 offset) {
 	if (mo->segs) {
 		size_t i;
 		for (i = 0; i < mo->nsegs; i++) {
-			ut64 segment_base = (ut64)mo->segs[i].fileoff;
-			ut64 segment_size = (ut64)mo->segs[i].filesize;
+			struct MACH0_(segment_command) *seg = &mo->segs[i];
+			ut64 segment_base = (ut64)seg->fileoff;
+			ut64 segment_size = (ut64)seg->filesize;
 			if (offset >= segment_base && offset < segment_base + segment_size) {
-				return mo->segs[i].vmaddr + (offset - segment_base);
+				return seg->vmaddr + (offset - segment_base);
 			}
 		}
 	}
@@ -360,38 +363,40 @@ static bool parse_segments(struct MACH0_(obj_t) * mo, ut64 off) {
 		return false;
 	}
 	const ut8 *scp = (const ut8 *)&segcom;
-	mo->segs[j].cmd = r_read_ble32 (scp, mo->big_endian);
+	const bool be = mo->big_endian;
+	struct MACH0_(segment_command) *seg = &mo->segs[j];
+	seg->cmd = r_read_ble32 (scp, be);
 	scp += sizeof (ut32);
-	mo->segs[j].cmdsize = r_read_ble32 (scp, mo->big_endian);
+	seg->cmdsize = r_read_ble32 (scp, be);
 	scp += sizeof (ut32);
-	memcpy (&mo->segs[j].segname, scp, 16);
+	memcpy (&seg->segname, scp, 16);
 	scp += 16;
 #if R_BIN_MACH064
-	mo->segs[j].vmaddr = r_read_ble64 (scp, mo->big_endian);
+	seg->vmaddr = r_read_ble64 (scp, be);
 	scp += sizeof (ut64);
-	mo->segs[j].vmsize = r_read_ble64 (scp, mo->big_endian);
+	seg->vmsize = r_read_ble64 (scp, be);
 	scp += sizeof (ut64);
-	mo->segs[j].fileoff = r_read_ble64 (scp, mo->big_endian);
+	seg->fileoff = r_read_ble64 (scp, be);
 	scp += sizeof (ut64);
-	mo->segs[j].filesize = r_read_ble64 (scp, mo->big_endian);
+	seg->filesize = r_read_ble64 (scp, be);
 	scp += sizeof (ut64);
 #else
-	mo->segs[j].vmaddr = r_read_ble32 (scp, mo->big_endian);
+	seg->vmaddr = r_read_ble32 (scp, be);
 	scp += sizeof (ut32);
-	mo->segs[j].vmsize = r_read_ble32 (scp, mo->big_endian);
+	seg->vmsize = r_read_ble32 (scp, be);
 	scp += sizeof (ut32);
-	mo->segs[j].fileoff = r_read_ble32 (scp, mo->big_endian);
+	seg->fileoff = r_read_ble32 (scp, be);
 	scp += sizeof (ut32);
-	mo->segs[j].filesize = r_read_ble32 (scp, mo->big_endian);
+	seg->filesize = r_read_ble32 (scp, be);
 	scp += sizeof (ut32);
 #endif
-	mo->segs[j].maxprot = r_read_ble32 (scp, mo->big_endian);
+	seg->maxprot = r_read_ble32 (scp, be);
 	scp += sizeof (ut32);
-	mo->segs[j].initprot = r_read_ble32 (scp, mo->big_endian);
+	seg->initprot = r_read_ble32 (scp, be);
 	scp += sizeof (ut32);
-	mo->segs[j].nsects = r_read_ble32 (scp, mo->big_endian);
+	seg->nsects = r_read_ble32 (scp, be);
 	scp += sizeof (ut32);
-	mo->segs[j].flags = r_read_ble32 (scp, mo->big_endian);
+	seg->flags = r_read_ble32 (scp, be);
 
 	char *segment_flagname = NULL;
 #if R_BIN_MACH064
@@ -403,9 +408,9 @@ static bool parse_segments(struct MACH0_(obj_t) * mo, ut64 off) {
 	free (segment_flagname);
 	sdb_num_set (mo->kv, "mach0_segments.count", 0, 0);
 
-	if (mo->segs[j].nsects > 0) {
+	if (seg->nsects > 0) {
 		sect = mo->nsects;
-		mo->nsects += mo->segs[j].nsects;
+		mo->nsects += seg->nsects;
 		if (mo->nsects > MACHO_MAX_SECTIONS) {
 			int new_nsects = mo->nsects & 0xf;
 			R_LOG_WARN ("mach0 header contains too many sections (%d). Wrapping to %d",
@@ -426,7 +431,7 @@ static bool parse_segments(struct MACH0_(obj_t) * mo, ut64 off) {
 			mo->nsects = sect;
 			return false;
 		}
-		if (mo->segs[j].cmdsize != sizeof (struct MACH0_(segment_command)) + (sizeof (struct MACH0_(section)) * mo->segs[j].nsects)) {
+		if (seg->cmdsize != sizeof (struct MACH0_(segment_command)) + (sizeof (struct MACH0_(section)) * seg->nsects)) {
 			mo->nsects = sect;
 			return false;
 		}
@@ -452,50 +457,51 @@ static bool parse_segments(struct MACH0_(obj_t) * mo, ut64 off) {
 				return false;
 			}
 
+			struct MACH0_(section) *sk = &mo->sects[k];
 			i = 0;
-			memcpy (&mo->sects[k].sectname, &sec[i], 16); // INFO: this string is not null terminated!
+			memcpy (&sk->sectname, &sec[i], 16); // INFO: this string is not null terminated!
 			i += 16;
-			memcpy (&mo->sects[k].segname, &sec[i], 16); // INFO: Remember: it's not null terminated!
+			memcpy (&sk->segname, &sec[i], 16); // INFO: Remember: it's not null terminated!
 			i += 16;
-			snprintf (section_flagname, sizeof (section_flagname), "mach0_section_%.16s_%.16s.offset", mo->sects[k].segname, mo->sects[k].sectname);
+			snprintf (section_flagname, sizeof (section_flagname), "mach0_section_%.16s_%.16s.offset", sk->segname, sk->sectname);
 			sdb_num_set (mo->kv, section_flagname, offset, 0);
 #if R_BIN_MACH064
-			snprintf (section_flagname, sizeof (section_flagname), "mach0_section_%.16s_%.16s.format", mo->sects[k].segname, mo->sects[k].sectname);
+			snprintf (section_flagname, sizeof (section_flagname), "mach0_section_%.16s_%.16s.format", sk->segname, sk->sectname);
 			sdb_set (mo->kv, section_flagname, "mach0_section64", 0);
 #else
-			snprintf (section_flagname, sizeof (section_flagname), "mach0_section_%.16s_%.16s.format", mo->sects[k].segname, mo->sects[k].sectname);
+			snprintf (section_flagname, sizeof (section_flagname), "mach0_section_%.16s_%.16s.format", sk->segname, sk->sectname);
 			sdb_set (mo->kv, section_flagname, "mach0_section", 0);
 #endif
 
 			const ut8 *scp = &sec[i];
 			const bool be = mo->big_endian;
 #if R_BIN_MACH064
-			mo->sects[k].addr = r_read_ble64 (scp, be);
+			sk->addr = r_read_ble64 (scp, be);
 			scp += sizeof (ut64);
-			mo->sects[k].size = r_read_ble64 (scp, be);
+			sk->size = r_read_ble64 (scp, be);
 			scp += sizeof (ut64);
 #else
-			mo->sects[k].addr = r_read_ble32 (scp, be);
+			sk->addr = r_read_ble32 (scp, be);
 			scp += sizeof (ut32);
-			mo->sects[k].size = r_read_ble32 (scp, be);
+			sk->size = r_read_ble32 (scp, be);
 			scp += sizeof (ut32);
 #endif
-			mo->sects[k].offset = r_read_ble32 (scp, be);
+			sk->offset = r_read_ble32 (scp, be);
 			scp += sizeof (ut32);
-			mo->sects[k].align = r_read_ble32 (scp, be);
+			sk->align = r_read_ble32 (scp, be);
 			scp += sizeof (ut32);
-			mo->sects[k].reloff = r_read_ble32 (scp, be);
+			sk->reloff = r_read_ble32 (scp, be);
 			scp += sizeof (ut32);
-			mo->sects[k].nreloc = r_read_ble32 (scp, be);
+			sk->nreloc = r_read_ble32 (scp, be);
 			scp += sizeof (ut32);
-			mo->sects[k].flags = r_read_ble32 (scp, be);
+			sk->flags = r_read_ble32 (scp, be);
 			scp += sizeof (ut32);
-			mo->sects[k].reserved1 = r_read_ble32 (scp, be);
+			sk->reserved1 = r_read_ble32 (scp, be);
 			scp += sizeof (ut32);
-			mo->sects[k].reserved2 = r_read_ble32 (scp, be);
+			sk->reserved2 = r_read_ble32 (scp, be);
 #if R_BIN_MACH064
 			scp += sizeof (ut32);
-			mo->sects[k].reserved3 = r_read_ble32 (scp, be);
+			sk->reserved3 = r_read_ble32 (scp, be);
 #endif
 		}
 	}
@@ -662,29 +668,30 @@ static bool parse_dysymtab(struct MACH0_(obj_t) * mo, ut64 off) {
 		return false;
 	}
 	const bool be = mo->big_endian;
+	struct dysymtab_command *ds = &mo->dysymtab;
 	// use r_buf_fread instead of all this duck typing
-	mo->dysymtab.cmd = r_read_ble32 (&dysym[0], be);
-	mo->dysymtab.cmdsize = r_read_ble32 (&dysym[4], be);
-	mo->dysymtab.ilocalsym = r_read_ble32 (&dysym[8], be);
-	mo->dysymtab.nlocalsym = r_read_ble32 (&dysym[12], be);
-	mo->dysymtab.iextdefsym = r_read_ble32 (&dysym[16], be);
-	mo->dysymtab.nextdefsym = r_read_ble32 (&dysym[20], be);
-	mo->dysymtab.iundefsym = r_read_ble32 (&dysym[24], be);
-	mo->dysymtab.nundefsym = r_read_ble32 (&dysym[28], be);
-	mo->dysymtab.tocoff = r_read_ble32 (&dysym[32], be);
-	mo->dysymtab.ntoc = r_read_ble32 (&dysym[36], be);
-	mo->dysymtab.modtaboff = r_read_ble32 (&dysym[40], be);
-	mo->dysymtab.nmodtab = r_read_ble32 (&dysym[44], be);
-	mo->dysymtab.extrefsymoff = r_read_ble32 (&dysym[48], be);
-	mo->dysymtab.nextrefsyms = r_read_ble32 (&dysym[52], be);
-	mo->dysymtab.indirectsymoff = r_read_ble32 (&dysym[56], be);
-	mo->dysymtab.nindirectsyms = r_read_ble32 (&dysym[60], be);
-	mo->dysymtab.extreloff = r_read_ble32 (&dysym[64], be);
-	mo->dysymtab.nextrel = r_read_ble32 (&dysym[68], be);
-	mo->dysymtab.locreloff = r_read_ble32 (&dysym[72], be);
-	mo->dysymtab.nlocrel = r_read_ble32 (&dysym[76], be);
+	ds->cmd = r_read_ble32 (&dysym[0], be);
+	ds->cmdsize = r_read_ble32 (&dysym[4], be);
+	ds->ilocalsym = r_read_ble32 (&dysym[8], be);
+	ds->nlocalsym = r_read_ble32 (&dysym[12], be);
+	ds->iextdefsym = r_read_ble32 (&dysym[16], be);
+	ds->nextdefsym = r_read_ble32 (&dysym[20], be);
+	ds->iundefsym = r_read_ble32 (&dysym[24], be);
+	ds->nundefsym = r_read_ble32 (&dysym[28], be);
+	ds->tocoff = r_read_ble32 (&dysym[32], be);
+	ds->ntoc = r_read_ble32 (&dysym[36], be);
+	ds->modtaboff = r_read_ble32 (&dysym[40], be);
+	ds->nmodtab = r_read_ble32 (&dysym[44], be);
+	ds->extrefsymoff = r_read_ble32 (&dysym[48], be);
+	ds->nextrefsyms = r_read_ble32 (&dysym[52], be);
+	ds->indirectsymoff = r_read_ble32 (&dysym[56], be);
+	ds->nindirectsyms = r_read_ble32 (&dysym[60], be);
+	ds->extreloff = r_read_ble32 (&dysym[64], be);
+	ds->nextrel = r_read_ble32 (&dysym[68], be);
+	ds->locreloff = r_read_ble32 (&dysym[72], be);
+	ds->nlocrel = r_read_ble32 (&dysym[76], be);
 
-	mo->ntoc = mo->dysymtab.ntoc;
+	mo->ntoc = ds->ntoc;
 	if (mo->ntoc > 0) {
 		if (!UT32_MUL (&size_tab, mo->ntoc, sizeof (struct dylib_table_of_contents))) {
 			return false;
@@ -692,7 +699,7 @@ static bool parse_dysymtab(struct MACH0_(obj_t) * mo, ut64 off) {
 		if (!size_tab) {
 			return false;
 		}
-		if (mo->dysymtab.tocoff > mo->size || mo->dysymtab.tocoff + size_tab > mo->size) {
+		if (ds->tocoff > mo->size || ds->tocoff + size_tab > mo->size) {
 			return false;
 		}
 		if (! (mo->toc = calloc (mo->ntoc, sizeof (struct dylib_table_of_contents)))) {
@@ -700,7 +707,7 @@ static bool parse_dysymtab(struct MACH0_(obj_t) * mo, ut64 off) {
 			return false;
 		}
 		for (i = 0; i < mo->ntoc; i++) {
-			len = r_buf_read_at (mo->b, mo->dysymtab.tocoff + i * sizeof (struct dylib_table_of_contents), dytoc, sizeof (struct dylib_table_of_contents));
+			len = r_buf_read_at (mo->b, ds->tocoff + i * sizeof (struct dylib_table_of_contents), dytoc, sizeof (struct dylib_table_of_contents));
 			if (len != sizeof (struct dylib_table_of_contents)) {
 				R_LOG_ERROR ("read (toc)");
 				R_FREE (mo->toc);
@@ -710,8 +717,8 @@ static bool parse_dysymtab(struct MACH0_(obj_t) * mo, ut64 off) {
 			mo->toc[i].module_index = r_read_ble32 (&dytoc[4], be);
 		}
 	}
-	mo->nmodtab = mo->dysymtab.nmodtab;
-	ut64 max_nmodtab = (mo->size - mo->dysymtab.modtaboff) / sizeof (struct MACH0_(dylib_module));
+	mo->nmodtab = ds->nmodtab;
+	ut64 max_nmodtab = (mo->size - ds->modtaboff) / sizeof (struct MACH0_(dylib_module));
 	if (mo->nmodtab > 0 && mo->nmodtab <= max_nmodtab) {
 		if (!UT32_MUL (&size_tab, mo->nmodtab, sizeof (struct MACH0_(dylib_module)))) {
 			return false;
@@ -719,8 +726,8 @@ static bool parse_dysymtab(struct MACH0_(obj_t) * mo, ut64 off) {
 		if (!size_tab) {
 			return false;
 		}
-		if (mo->dysymtab.modtaboff > mo->size ||
-			mo->dysymtab.modtaboff + size_tab > mo->size) {
+		if (ds->modtaboff > mo->size ||
+			ds->modtaboff + size_tab > mo->size) {
 			return false;
 		}
 		if (! (mo->modtab = calloc (mo->nmodtab, sizeof (struct MACH0_(dylib_module))))) {
@@ -728,34 +735,34 @@ static bool parse_dysymtab(struct MACH0_(obj_t) * mo, ut64 off) {
 			return false;
 		}
 		for (i = 0; i < mo->nmodtab; i++) {
-			len = r_buf_read_at (mo->b, mo->dysymtab.modtaboff + i * sizeof (struct MACH0_(dylib_module)), dymod, sizeof (struct MACH0_(dylib_module)));
+			len = r_buf_read_at (mo->b, ds->modtaboff + i * sizeof (struct MACH0_(dylib_module)), dymod, sizeof (struct MACH0_(dylib_module)));
 			if (len == -1) {
 				R_LOG_ERROR ("read (modtab)");
 				R_FREE (mo->modtab);
 				return false;
 			}
-			// TODO: reduce dereferences
-			mo->modtab[i].module_name = r_read_ble32 (&dymod[0], be);
-			mo->modtab[i].iextdefsym = r_read_ble32 (&dymod[4], be);
-			mo->modtab[i].nextdefsym = r_read_ble32 (&dymod[8], be);
-			mo->modtab[i].irefsym = r_read_ble32 (&dymod[12], be);
-			mo->modtab[i].nrefsym = r_read_ble32 (&dymod[16], be);
-			mo->modtab[i].ilocalsym = r_read_ble32 (&dymod[20], be);
-			mo->modtab[i].nlocalsym = r_read_ble32 (&dymod[24], be);
-			mo->modtab[i].iextrel = r_read_ble32 (&dymod[28], be);
-			mo->modtab[i].nextrel = r_read_ble32 (&dymod[32], be);
-			mo->modtab[i].iinit_iterm = r_read_ble32 (&dymod[36], be);
-			mo->modtab[i].ninit_nterm = r_read_ble32 (&dymod[40], be);
+			struct MACH0_(dylib_module) *mt = &mo->modtab[i];
+			mt->module_name = r_read_ble32 (&dymod[0], be);
+			mt->iextdefsym = r_read_ble32 (&dymod[4], be);
+			mt->nextdefsym = r_read_ble32 (&dymod[8], be);
+			mt->irefsym = r_read_ble32 (&dymod[12], be);
+			mt->nrefsym = r_read_ble32 (&dymod[16], be);
+			mt->ilocalsym = r_read_ble32 (&dymod[20], be);
+			mt->nlocalsym = r_read_ble32 (&dymod[24], be);
+			mt->iextrel = r_read_ble32 (&dymod[28], be);
+			mt->nextrel = r_read_ble32 (&dymod[32], be);
+			mt->iinit_iterm = r_read_ble32 (&dymod[36], be);
+			mt->ninit_nterm = r_read_ble32 (&dymod[40], be);
 #if R_BIN_MACH064
-			mo->modtab[i].objc_module_info_size = r_read_ble32 (&dymod[44], be);
-			mo->modtab[i].objc_module_info_addr = r_read_ble64 (&dymod[48], be);
+			mt->objc_module_info_size = r_read_ble32 (&dymod[44], be);
+			mt->objc_module_info_addr = r_read_ble64 (&dymod[48], be);
 #else
-			mo->modtab[i].objc_module_info_addr = r_read_ble32 (&dymod[44], be);
-			mo->modtab[i].objc_module_info_size = r_read_ble32 (&dymod[48], be);
+			mt->objc_module_info_addr = r_read_ble32 (&dymod[44], be);
+			mt->objc_module_info_size = r_read_ble32 (&dymod[48], be);
 #endif
 		}
 	}
-	mo->nindirectsyms = mo->dysymtab.nindirectsyms;
+	mo->nindirectsyms = ds->nindirectsyms;
 	if (mo->nindirectsyms > 0) {
 		if (!UT32_MUL (&size_tab, mo->nindirectsyms, sizeof (ut32))) {
 			mo->nindirectsyms = 0;
@@ -765,8 +772,8 @@ static bool parse_dysymtab(struct MACH0_(obj_t) * mo, ut64 off) {
 			mo->nindirectsyms = 0;
 			return false;
 		}
-		if (mo->dysymtab.indirectsymoff > mo->size ||
-			mo->dysymtab.indirectsymoff + size_tab > mo->size) {
+		if (ds->indirectsymoff > mo->size ||
+			ds->indirectsymoff + size_tab > mo->size) {
 			mo->nindirectsyms = 0;
 			return false;
 		}
@@ -776,7 +783,7 @@ static bool parse_dysymtab(struct MACH0_(obj_t) * mo, ut64 off) {
 			return false;
 		}
 		for (i = 0; i < mo->nindirectsyms; i++) {
-			len = r_buf_read_at (mo->b, mo->dysymtab.indirectsymoff + i * sizeof (ut32), idsyms, 4);
+			len = r_buf_read_at (mo->b, ds->indirectsymoff + i * sizeof (ut32), idsyms, 4);
 			if (len == -1) {
 				R_LOG_ERROR ("read (indirect syms)");
 				R_FREE (mo->indirectsyms);
@@ -1719,19 +1726,20 @@ static bool reconstruct_chained_fixup(struct MACH0_(obj_t) * mo) {
 	int seg_idx = 0;
 	ut64 seg_off = 0;
 	ut64 segment_size = 0;
-	size_t bind_size = mo->dyld_info->bind_size;
+	struct dyld_info_command *di = mo->dyld_info;
+	size_t bind_size = di->bind_size;
 	if (!bind_size) {
 		return false;
 	}
-	if (!fits_in (mo->size, mo->dyld_info->bind_off, bind_size)) {
+	if (!fits_in (mo->size, di->bind_off, bind_size)) {
 		return false;
 	}
 	ut8 *opcodes = calloc (1, bind_size + 1);
 	if (!opcodes) {
 		return false;
 	}
-	if (r_buf_read_at (mo->b, mo->dyld_info->bind_off, opcodes, bind_size) != bind_size) {
-		R_LOG_ERROR ("read (dyld_info bind) at 0x%08" PFMT64x, (ut64) (size_t)mo->dyld_info->bind_off);
+	if (r_buf_read_at (mo->b, di->bind_off, opcodes, bind_size) != bind_size) {
+		R_LOG_ERROR ("read (dyld_info bind) at 0x%08" PFMT64x, (ut64) (size_t)di->bind_off);
 		R_FREE (opcodes);
 		return false;
 	}
@@ -2141,18 +2149,19 @@ static int init_items(struct MACH0_(obj_t) * mo) {
 						R_LOG_DEBUG ("read (LC_DYLD_INFO) at 0x%08" PFMT64x, off);
 					} else {
 						const bool be = mo->big_endian;
-						mo->dyld_info->cmd = r_read_ble32 (&dyldi[0], be);
-						mo->dyld_info->cmdsize = r_read_ble32 (&dyldi[4], be);
-						mo->dyld_info->rebase_off = r_read_ble32 (&dyldi[8], be);
-						mo->dyld_info->rebase_size = r_read_ble32 (&dyldi[12], be);
-						mo->dyld_info->bind_off = r_read_ble32 (&dyldi[16], be);
-						mo->dyld_info->bind_size = r_read_ble32 (&dyldi[20], be);
-						mo->dyld_info->weak_bind_off = r_read_ble32 (&dyldi[24], be);
-						mo->dyld_info->weak_bind_size = r_read_ble32 (&dyldi[28], be);
-						mo->dyld_info->lazy_bind_off = r_read_ble32 (&dyldi[32], be);
-						mo->dyld_info->lazy_bind_size = r_read_ble32 (&dyldi[36], be);
-						mo->dyld_info->export_off = r_read_ble32 (&dyldi[40], be) + mo->symbols_off;
-						mo->dyld_info->export_size = r_read_ble32 (&dyldi[44], be);
+						struct dyld_info_command *di = mo->dyld_info;
+						di->cmd = r_read_ble32 (&dyldi[0], be);
+						di->cmdsize = r_read_ble32 (&dyldi[4], be);
+						di->rebase_off = r_read_ble32 (&dyldi[8], be);
+						di->rebase_size = r_read_ble32 (&dyldi[12], be);
+						di->bind_off = r_read_ble32 (&dyldi[16], be);
+						di->bind_size = r_read_ble32 (&dyldi[20], be);
+						di->weak_bind_off = r_read_ble32 (&dyldi[24], be);
+						di->weak_bind_size = r_read_ble32 (&dyldi[28], be);
+						di->lazy_bind_off = r_read_ble32 (&dyldi[32], be);
+						di->lazy_bind_size = r_read_ble32 (&dyldi[36], be);
+						di->export_off = r_read_ble32 (&dyldi[40], be) + mo->symbols_off;
+						di->export_size = r_read_ble32 (&dyldi[44], be);
 					}
 				}
 			}
@@ -2565,25 +2574,27 @@ RVecSegment *MACH0_(get_segments_vec)(RBinFile *bf, struct MACH0_(obj_t) * mo) {
 				}
 				memset (s, 0, sizeof (RBinSection)); // XXX redundant?
 
-				s->vaddr = (ut64)mo->sects[i].addr;
-				s->vsize = (ut64)mo->sects[i].size;
+				struct MACH0_(section) *sect = &mo->sects[i];
+				s->vaddr = (ut64)sect->addr;
+				s->vsize = (ut64)sect->size;
 				s->is_segment = false;
-				s->size = (mo->sects[i].flags == S_ZEROFILL)? 0: (ut64)mo->sects[i].size;
-				s->type = macho_section_type_tostring (mo->sects[i].flags);
-				s->paddr = (ut64)mo->sects[i].offset;
+				s->size = (sect->flags == S_ZEROFILL)? 0: (ut64)sect->size;
+				s->type = macho_section_type_tostring (sect->flags);
+				s->paddr = (ut64)sect->offset;
 
 				int segment_index = 0;
 				size_t j;
 				for (j = 0; j < mo->nsegs; j++) {
-					if (s->vaddr >= mo->segs[j].vmaddr &&
-						s->vaddr < (mo->segs[j].vmaddr + mo->segs[j].vmsize)) {
-						s->perm = prot2perm (mo->segs[j].initprot);
+					struct MACH0_(segment_command) *seg = &mo->segs[j];
+					if (s->vaddr >= seg->vmaddr &&
+						s->vaddr < (seg->vmaddr + seg->vmsize)) {
+						s->perm = prot2perm (seg->initprot);
 						segment_index = j;
 						break;
 					}
 				}
 
-				char *section_name = r_str_ndup (mo->sects[i].sectname, 16);
+				char *section_name = r_str_ndup (sect->sectname, 16);
 				char *segment_name = r_str_newf ("%u.%s", (ut32)i, mo->segs[segment_index].segname);
 				s->name = r_str_newf ("%s.%s", segment_name, section_name);
 				if (strstr (s->name, "__const")) {
@@ -2687,20 +2698,22 @@ const RVecSection *MACH0_(load_sections)(struct MACH0_(obj_t) * mo) {
 	}
 	for (i = 0; i < to; i++) {
 		struct section_t *section = RVecSection_emplace_back (&mo->sections_cache);
-		section->paddr = (ut64)mo->sects[i].offset;
-		section->vaddr = (ut64)mo->sects[i].addr;
-		section->size = (mo->sects[i].flags == S_ZEROFILL)? 0: (ut64)mo->sects[i].size;
-		section->vsize = (ut64)mo->sects[i].size;
-		section->align = mo->sects[i].align;
-		section->flags = mo->sects[i].flags;
-		r_str_ncpy (sectname, mo->sects[i].sectname, 17);
+		struct MACH0_(section) *sect = &mo->sects[i];
+		section->paddr = (ut64)sect->offset;
+		section->vaddr = (ut64)sect->addr;
+		section->size = (sect->flags == S_ZEROFILL)? 0: (ut64)sect->size;
+		section->vsize = (ut64)sect->size;
+		section->align = sect->align;
+		section->flags = sect->flags;
+		r_str_ncpy (sectname, sect->sectname, 17);
 		r_str_filter (sectname, -1);
-		r_str_ncpy (raw_segname, mo->sects[i].segname, 17);
+		r_str_ncpy (raw_segname, sect->segname, 17);
 		r_str_filter (raw_segname, -1);
 		for (j = 0; j < mo->nsegs; j++) {
-			if (section->vaddr >= mo->segs[j].vmaddr &&
-				section->vaddr < (mo->segs[j].vmaddr + mo->segs[j].vmsize)) {
-				section->perm = prot2perm (mo->segs[j].initprot);
+			struct MACH0_(segment_command) *seg = &mo->segs[j];
+			if (section->vaddr >= seg->vmaddr &&
+				section->vaddr < (seg->vmaddr + seg->vmsize)) {
+				section->perm = prot2perm (seg->initprot);
 				break;
 			}
 		}
@@ -2730,36 +2743,37 @@ static bool parse_import_stub(struct MACH0_(obj_t) * bin, struct symbol_t *symbo
 		return false;
 	}
 	for (i = 0; i < bin->nsects; i++) {
-		if ((bin->sects[i].flags & SECTION_TYPE) == S_SYMBOL_STUBS && bin->sects[i].reserved2 > 0) {
-			ut64 sect_size = bin->sects[i].size;
-			ut32 sect_fragment = bin->sects[i].reserved2;
-			if (bin->sects[i].offset > bin->size) {
+		struct MACH0_(section) *sect = &bin->sects[i];
+		if ((sect->flags & SECTION_TYPE) == S_SYMBOL_STUBS && sect->reserved2 > 0) {
+			ut64 sect_size = sect->size;
+			ut32 sect_fragment = sect->reserved2;
+			if (sect->offset > bin->size) {
 				R_LOG_DEBUG ("section offset starts way beyond the end of the file");
 				continue;
 			}
 			if (sect_size > bin->size) {
 				R_LOG_DEBUG ("Invalid symbol table size");
-				sect_size = bin->size - bin->sects[i].offset;
+				sect_size = bin->size - sect->offset;
 			}
 			nsyms = (int) (sect_size / sect_fragment);
 			for (j = 0; j < nsyms; j++) {
-				if ((ut64)bin->sects[i].reserved1 + j >= (ut64)bin->nindirectsyms) {
+				if ((ut64)sect->reserved1 + j >= (ut64)bin->nindirectsyms) {
 					continue;
 				}
-				if (idx != bin->indirectsyms[bin->sects[i].reserved1 + j]) {
+				if (idx != bin->indirectsyms[sect->reserved1 + j]) {
 					continue;
 				}
 				if (idx >= bin->nsymtab) {
 					continue;
 				}
 				symbol->type = R_BIN_MACH0_SYMBOL_TYPE_LOCAL;
-				int delta = j * bin->sects[i].reserved2;
+				int delta = j * sect->reserved2;
 				if (delta < 0) {
 					R_LOG_DEBUG ("corrupted reserved2 value leads to int overflow");
 					continue;
 				}
-				symbol->offset = bin->sects[i].offset + delta;
-				symbol->addr = bin->sects[i].addr + delta;
+				symbol->offset = sect->offset + delta;
+				symbol->addr = sect->addr + delta;
 				symbol->size = 0;
 				stridx = bin->symtab[idx].n_strx;
 				if (stridx < bin->symstrlen) {
@@ -3146,19 +3160,20 @@ static bool apple_symbol(const char *sym_name) {
 static bool dysym_bounds(struct MACH0_(obj_t) * mo, size_t s, ut64 *f, ut64 *t) {
 	ut32 from = 0;
 	ut32 to = 0;
+	struct dysymtab_command *ds = &mo->dysymtab;
 	switch (s) {
 	case 0:
-		from = mo->dysymtab.iextdefsym;
-		to = from + mo->dysymtab.nextdefsym;
+		from = ds->iextdefsym;
+		to = from + ds->nextdefsym;
 		break;
 	case 1:
-		from = mo->dysymtab.ilocalsym;
-		to = from + mo->dysymtab.nlocalsym;
+		from = ds->ilocalsym;
+		to = from + ds->nlocalsym;
 		break;
 #if WALK_THE_UNDEFINED
 	case 2:
-		from = mo->dysymtab.iundefsym;
-		to = from + mo->dysymtab.nundefsym;
+		from = ds->iundefsym;
+		to = from + ds->nundefsym;
 		break;
 #endif
 	default:
@@ -3216,7 +3231,8 @@ static void parse_symbols(RBinFile *bf, struct MACH0_(obj_t) * mo, HtPP *symcach
 	const bool has_redacted = mo->symstrlen > 0
 		&& r_mem_mem (mo->symstr, mo->symstrlen, (const ut8 *)"<redacted>", sizeof ("<redacted>") - 1) != NULL;
 	/* parse dynamic symbol table */
-	symbols_count = mo->dysymtab.nextdefsym + mo->dysymtab.nlocalsym + mo->dysymtab.nundefsym + mo->nsymtab;
+	struct dysymtab_command *ds = &mo->dysymtab;
+	symbols_count = ds->nextdefsym + ds->nlocalsym + ds->nundefsym + mo->nsymtab;
 	if (symbols_count == 0) {
 		ht_pp_free (hash);
 		return;
@@ -3242,11 +3258,12 @@ static void parse_symbols(RBinFile *bf, struct MACH0_(obj_t) * mo, HtPP *symcach
 		}
 
 		for (i = from; i < to && j < symbols_count; i++) {
-			ut64 vaddr = mo->symtab[i].n_value;
+			struct MACH0_(nlist) *nl = &mo->symtab[i];
+			ut64 vaddr = nl->n_value;
 			if (vaddr < 100) {
 				continue;
 			}
-			int stridx = mo->symtab[i].n_strx;
+			int stridx = nl->n_strx;
 			char *sym_name = get_name (mo, stridx, false);
 			if (!sym_name) {
 				continue;
@@ -3260,9 +3277,9 @@ static void parse_symbols(RBinFile *bf, struct MACH0_(obj_t) * mo, HtPP *symcach
 				sym->vaddr = vaddr;
 				sym->paddr = addr_to_offset (mo, sym->vaddr) + obj->boffset;
 				sym->size = 0; /* TODO: Is it anywhere? */
-				sym->bits = mo->symtab[i].n_desc & N_ARM_THUMB_DEF? 16: bits;
+				sym->bits = nl->n_desc & N_ARM_THUMB_DEF? 16: bits;
 				sym->is_imported = false;
-				sym->type = mo->symtab[i].n_type & N_EXT? "EXT": "LOCAL";
+				sym->type = nl->n_type & N_EXT? "EXT": "LOCAL";
 				sym->name = r_bin_name_new (sym_name);
 				if (is_stripped && !apple_symbol (sym_name)) {
 					is_stripped = false;
@@ -3280,8 +3297,8 @@ static void parse_symbols(RBinFile *bf, struct MACH0_(obj_t) * mo, HtPP *symcach
 		}
 	}
 
-	to = R_MIN ((ut32)mo->nsymtab, mo->dysymtab.iundefsym + mo->dysymtab.nundefsym);
-	for (i = mo->dysymtab.iundefsym; i < to; i++) {
+	to = R_MIN ((ut32)mo->nsymtab, ds->iundefsym + ds->nundefsym);
+	for (i = ds->iundefsym; i < to; i++) {
 		struct symbol_t symbol;
 		if (j > symbols_count) {
 			R_LOG_WARN ("mach0-get-symbols: error");
@@ -3536,9 +3553,10 @@ static struct reloc_t *parse_import_ptr(struct MACH0_(obj_t) * mo, int jota) {
 	reloc->addend = 0;
 	reloc->ntype = stype;
 	for (i = 0; i < mo->nsects; i++) {
-		if ((mo->sects[i].flags & SECTION_TYPE) == stype) {
-			for (j = 0, sym = -1; mo->sects[i].reserved1 + j < mo->nindirectsyms; j++) {
-				int indidx = mo->sects[i].reserved1 + j;
+		struct MACH0_(section) *sect = &mo->sects[i];
+		if ((sect->flags & SECTION_TYPE) == stype) {
+			for (j = 0, sym = -1; sect->reserved1 + j < mo->nindirectsyms; j++) {
+				int indidx = sect->reserved1 + j;
 				if (indidx < 0 || indidx >= mo->nindirectsyms) {
 					break;
 				}
@@ -3547,8 +3565,8 @@ static struct reloc_t *parse_import_ptr(struct MACH0_(obj_t) * mo, int jota) {
 					break;
 				}
 			}
-			reloc->offset = sym == -1? 0: mo->sects[i].offset + sym * wordsize;
-			reloc->addr = sym == -1? 0: mo->sects[i].addr + sym * wordsize;
+			reloc->offset = sym == -1? 0: sect->offset + sym * wordsize;
+			reloc->addr = sym == -1? 0: sect->addr + sym * wordsize;
 			return reloc;
 		}
 	}
@@ -3726,10 +3744,11 @@ static bool walk_bind_chains_callback(void *context, RFixupEventDetails *ed) {
 	RWalkBindChainsContext *ctx = context;
 	ut8 *imports = ctx->imports;
 	struct MACH0_(obj_t) *mo = ed->bin;
-	ut32 imports_count = mo->fixups_header.imports_count;
+	struct dyld_chained_fixups_header *fh = &mo->fixups_header;
+	ut32 imports_count = fh->imports_count;
 	ut32 fixups_offset = mo->fixups_offset;
 	ut32 fixups_size = mo->fixups_size;
-	ut32 imports_format = mo->fixups_header.imports_format;
+	ut32 imports_format = fh->imports_format;
 	ut32 import_index = ed->ordinal;
 	ut64 addend = 0;
 	if (ed->type != R_FIXUP_EVENT_BIND_AUTH) {
@@ -3767,7 +3786,7 @@ static bool walk_bind_chains_callback(void *context, RFixupEventDetails *ed) {
 			return false;
 		}
 
-		ut64 symbols_offset = mo->fixups_header.symbols_offset + fixups_offset;
+		ut64 symbols_offset = fh->symbols_offset + fixups_offset;
 
 		if (symbols_offset + name_offset + 1 < fixups_offset + fixups_size) {
 			char *name = r_buf_get_string (mo->b, symbols_offset + name_offset);
@@ -3800,18 +3819,19 @@ static void walk_bind_chains(struct MACH0_(obj_t) * mo, RSkipList *relocs) {
 
 	ut8 *imports = NULL;
 
-	ut32 imports_count = mo->fixups_header.imports_count;
+	struct dyld_chained_fixups_header *fh = &mo->fixups_header;
+	ut32 imports_count = fh->imports_count;
 	ut32 fixups_offset = mo->fixups_offset;
-	ut32 imports_offset = mo->fixups_header.imports_offset;
+	ut32 imports_offset = fh->imports_offset;
 	if (!imports_count || !imports_offset) {
 		return;
 	}
-	if (mo->fixups_header.symbols_format != 0) {
+	if (fh->symbols_format != 0) {
 		R_LOG_INFO ("Compressed fixups symbols not supported yet, please file a bug with a sample attached");
 		return;
 	}
 
-	ut32 imports_format = mo->fixups_header.imports_format;
+	ut32 imports_format = fh->imports_format;
 	ut64 imports_size;
 	switch (imports_format) {
 	case DYLD_CHAINED_IMPORT:
@@ -3902,15 +3922,16 @@ typedef struct {
 
 static HtPP *build_symbol_ordinal_cache(struct MACH0_(obj_t) * mo) {
 	HtPP *cache = ht_pp_new0 ();
-	if (!mo->symtab || mo->dysymtab.nundefsym >= UT16_MAX) {
+	struct dysymtab_command *ds = &mo->dysymtab;
+	if (!mo->symtab || ds->nundefsym >= UT16_MAX) {
 		return cache;
 	}
-	int iundefsym = mo->dysymtab.iundefsym;
+	int iundefsym = ds->iundefsym;
 	if (iundefsym < 0 || iundefsym >= mo->nsymtab) {
 		return cache;
 	}
 	int j;
-	for (j = 0; j < mo->dysymtab.nundefsym; j++) {
+	for (j = 0; j < ds->nundefsym; j++) {
 		int sidx = iundefsym + j;
 		if (sidx < 0 || sidx >= mo->nsymtab) {
 			continue;
@@ -3948,7 +3969,8 @@ static void insert_bind_reloc(struct MACH0_(obj_t) * mo, RVecRelocRef *threaded_
 	struct reloc_t *reloc = R_NEW0 (struct reloc_t);
 	reloc->addr = state->addr;
 	if (state->seg_idx >= 0) {
-		reloc->offset = state->addr - mo->segs[state->seg_idx].vmaddr + mo->segs[state->seg_idx].fileoff;
+		struct MACH0_(segment_command) *seg = &mo->segs[state->seg_idx];
+		reloc->offset = state->addr - seg->vmaddr + seg->fileoff;
 		reloc->addend = state->addend;
 		if (state->type == BIND_TYPE_TEXT_PCREL32) {
 			reloc->addend -= (mo->baddr + state->addr);
@@ -3981,10 +4003,11 @@ static void apply_threaded_bind(struct MACH0_(obj_t) * mo, RVecRelocRef *threade
 		return;
 	}
 	int cur_seg_idx = (state->seg_idx != -1)? state->seg_idx: 0;
+	struct MACH0_(segment_command) *cur_seg = &mo->segs[cur_seg_idx];
 	ut64 n_threaded_binds = RVecRelocRef_length (threaded_binds);
 	while (state->addr < state->segment_end_addr) {
 		ut8 tmp[8];
-		ut64 paddr = state->addr - mo->segs[cur_seg_idx].vmaddr + mo->segs[cur_seg_idx].fileoff;
+		ut64 paddr = state->addr - cur_seg->vmaddr + cur_seg->fileoff;
 		mo->rebasing_buffer = true;
 		if (r_buf_read_at (mo->b, paddr, tmp, 8) != 8) {
 			break;
@@ -4175,8 +4198,11 @@ static bool parse_bind_op(struct MACH0_(obj_t) * mo, RVecRelocRef **threaded_bin
 			R_LOG_ERROR ("BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB has no segment %d", state->seg_idx);
 			return false;
 		}
-		state->addr = mo->segs[state->seg_idx].vmaddr + read_uleb128 (p, end);
-		state->segment_end_addr = mo->segs[state->seg_idx].vmaddr + mo->segs[state->seg_idx].vmsize;
+		{
+			struct MACH0_(segment_command) *seg = &mo->segs[state->seg_idx];
+			state->addr = seg->vmaddr + read_uleb128 (p, end);
+			state->segment_end_addr = seg->vmaddr + seg->vmsize;
+		}
 		return true;
 	case BIND_OPCODE_ADD_ADDR_ULEB:
 		state->addr += read_uleb128 (p, end);
@@ -4201,9 +4227,10 @@ static bool _load_relocations(struct MACH0_(obj_t) * mo) {
 		if (!rel_type) {
 			return false;
 		}
-		size_t bind_size = mo->dyld_info->bind_size;
-		size_t lazy_size = mo->dyld_info->lazy_bind_size;
-		size_t weak_size = mo->dyld_info->weak_bind_size;
+		struct dyld_info_command *di = mo->dyld_info;
+		size_t bind_size = di->bind_size;
+		size_t lazy_size = di->lazy_bind_size;
+		size_t weak_size = di->weak_bind_size;
 		ut64 bind_lazy_size = 0;
 
 		if (!bind_size && !lazy_size) {
@@ -4212,16 +4239,16 @@ static bool _load_relocations(struct MACH0_(obj_t) * mo) {
 		if (!UT64_ADD (&bind_lazy_size, bind_size, lazy_size)) {
 			return false;
 		}
-		if (!fits_in (mo->size, mo->dyld_info->bind_off, bind_size)) {
+		if (!fits_in (mo->size, di->bind_off, bind_size)) {
 			return false;
 		}
-		if (!fits_in (mo->size, mo->dyld_info->lazy_bind_off, lazy_size)) {
+		if (!fits_in (mo->size, di->lazy_bind_off, lazy_size)) {
 			return false;
 		}
-		if (!fits_in (mo->size, mo->dyld_info->bind_off, bind_lazy_size)) {
+		if (!fits_in (mo->size, di->bind_off, bind_lazy_size)) {
 			return false;
 		}
-		if (!fits_in (mo->size, mo->dyld_info->weak_bind_off, weak_size)) {
+		if (!fits_in (mo->size, di->weak_bind_off, weak_size)) {
 			return false;
 		}
 		ut64 amount = 0;
@@ -4236,11 +4263,11 @@ static bool _load_relocations(struct MACH0_(obj_t) * mo) {
 			return false;
 		}
 
-		st64 len = r_buf_read_at (mo->b, mo->dyld_info->bind_off, opcodes, bind_size);
-		len += r_buf_read_at (mo->b, mo->dyld_info->lazy_bind_off, opcodes + bind_size, lazy_size);
-		len += r_buf_read_at (mo->b, mo->dyld_info->weak_bind_off, opcodes + bind_size + lazy_size, weak_size);
+		st64 len = r_buf_read_at (mo->b, di->bind_off, opcodes, bind_size);
+		len += r_buf_read_at (mo->b, di->lazy_bind_off, opcodes + bind_size, lazy_size);
+		len += r_buf_read_at (mo->b, di->weak_bind_off, opcodes + bind_size + lazy_size, weak_size);
 		if (len < 0 || (ut64)len < amount) {
-			R_LOG_ERROR ("read (dyld_info bind) at 0x%08" PFMT64x, (ut64) (size_t)mo->dyld_info->bind_off);
+			R_LOG_ERROR ("read (dyld_info bind) at 0x%08" PFMT64x, (ut64) (size_t)di->bind_off);
 			R_FREE (opcodes);
 			return false;
 		}
@@ -4256,10 +4283,11 @@ static bool _load_relocations(struct MACH0_(obj_t) * mo) {
 			}
 
 			RBindOpState state = { 0 };
+			struct MACH0_(segment_command) *seg0 = &mo->segs[0];
 			state.seg_idx = -1;
 			state.sym_ord = -1;
-			state.addr = mo->segs[0].vmaddr;
-			state.segment_end_addr = mo->segs[0].vmaddr + mo->segs[0].vmsize;
+			state.addr = seg0->vmaddr;
+			state.segment_end_addr = seg0->vmaddr + seg0->vmsize;
 
 			ut8 *p = opcodes + opcodes_offset;
 			ut8 *end = p + partition_size;
@@ -4282,8 +4310,9 @@ static bool _load_relocations(struct MACH0_(obj_t) * mo) {
 		threaded_binds = NULL;
 	}
 
+	struct dysymtab_command *ds = &mo->dysymtab;
 	if (mo->symtab && mo->symstr && mo->sects && mo->indirectsyms) {
-		int j, amount = clamp_count (mo->dysymtab.nundefsym, mo->limit);
+		int j, amount = clamp_count (ds->nundefsym, mo->limit);
 		for (j = 0; j < amount; j++) {
 			struct reloc_t *reloc = parse_import_ptr (mo, j);
 			if (!reloc) {
@@ -4294,8 +4323,8 @@ static bool _load_relocations(struct MACH0_(obj_t) * mo) {
 		}
 	}
 
-	if (mo->symtab && mo->dysymtab.extreloff && mo->dysymtab.nextrel) {
-		parse_relocation_info (mo, mo->relocs_cache, mo->dysymtab.extreloff, mo->dysymtab.nextrel);
+	if (mo->symtab && ds->extreloff && ds->nextrel) {
+		parse_relocation_info (mo, mo->relocs_cache, ds->extreloff, ds->nextrel);
 	}
 
 	if (!mo->dyld_info && mo->chained_starts && mo->nsegs && mo->fixups_offset) {
@@ -4340,11 +4369,12 @@ struct addr_t *MACH0_(get_entrypoint)(struct MACH0_(obj_t) * mo) {
 	if (entry->offset == 0 && mo->sects) {
 		int i;
 		for (i = 0; i < mo->nsects; i++) {
+			struct MACH0_(section) *sect = &mo->sects[i];
 			// XXX: section name shoudnt matter .. just check for exec flags
-			if (r_str_startswith (mo->sects[i].sectname, "__text")) {
-				entry->offset = (ut64)mo->sects[i].offset;
+			if (r_str_startswith (sect->sectname, "__text")) {
+				entry->offset = (ut64)sect->offset;
 				sdb_num_set (mo->kv, "mach0.entry", entry->offset, 0);
-				entry->addr = (ut64)mo->sects[i].addr;
+				entry->addr = (ut64)sect->addr;
 				if (!entry->addr) { // workaround for object files
 					R_LOG_INFO ("entrypoint is 0");
 					// XXX (lowlyw) there's technically not really entrypoints
@@ -4389,8 +4419,9 @@ ut64 MACH0_(get_baddr)(struct MACH0_(obj_t) * mo) {
 		return 0;
 	}
 	for (i = 0; i < mo->nsegs; i++) {
-		if (mo->segs[i].fileoff == 0 && mo->segs[i].filesize != 0) {
-			return mo->segs[i].vmaddr;
+		struct MACH0_(segment_command) *seg = &mo->segs[i];
+		if (seg->fileoff == 0 && seg->filesize != 0) {
+			return seg->vmaddr;
 		}
 	}
 	return 0;
@@ -5263,8 +5294,9 @@ void MACH0_(iterate_chained_fixups)(struct MACH0_(obj_t) * mo, ut64 limit_start,
 		if (page_size < 1) {
 			page_size = 4096;
 		}
-		ut64 start = mo->segs[i].fileoff;
-		ut64 end = start + mo->segs[i].filesize;
+		struct MACH0_(segment_command) *seg = &mo->segs[i];
+		ut64 start = seg->fileoff;
+		ut64 end = start + seg->filesize;
 		if (end >= limit_start && start <= limit_end) {
 			ut64 page_idx = (R_MAX (start, limit_start) - start) / page_size;
 			ut64 page_end_idx = (R_MIN (limit_end, end) - start) / page_size;
