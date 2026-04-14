@@ -30,3 +30,70 @@ EXPECT=<<EOF
 0x00177ff8 = (qword)0x0000000000178000
 EOF
 RUN
+
+NAME=ESIL stepback across self-loop
+FILE=-
+CMDS=<<EOF
+e asm.arch=x86
+e asm.bits=64
+e io.cache=true
+o malloc://4096 0x100
+# layout: nop ; mov eax, 1 ; jmp $ ; nop ; nop
+wx 90b801000000ebfe9090 @ 0x100
+s 0x100
+aei
+aeim
+aeip
+aets+
+aeso
+aeso
+aeso
+aeso
+?e final PC=`dr PC`
+?e final rax=`dr rax`
+aesb
+aesb
+aesb
+aesb
+?e restored PC=`dr PC`
+?e restored rax=`dr rax`
+aets-
+EOF
+EXPECT=<<EOF
+final PC=0x00000109
+final rax=0x00000001
+restored PC=0x00000100
+restored rax=0x00000000
+EOF
+RUN
+
+NAME=ESIL stepback rolls back self-loop instruction
+FILE=-
+CMDS=<<EOF
+e asm.arch=x86
+e asm.bits=64
+e io.cache=true
+o malloc://4096 0x100
+# layout: mov eax, 1 ; jmp $ (self-loop) ; nop
+wx b801000000ebfe90 @ 0x100
+s 0x100
+aei
+aeim
+aeip
+aets+
+aeso
+aeso
+?e after_mov_jmp PC=`dr PC`
+?e after_mov_jmp rax=`dr rax`
+aesb
+?e back_after_mov PC=`dr PC`
+?e back_after_mov rax=`dr rax`
+aets-
+EOF
+EXPECT=<<EOF
+after_mov_jmp PC=0x00000107
+after_mov_jmp rax=0x00000001
+back_after_mov PC=0x00000105
+back_after_mov rax=0x00000001
+EOF
+RUN
