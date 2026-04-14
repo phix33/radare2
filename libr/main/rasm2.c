@@ -159,13 +159,14 @@ static int showanal(RAsmState *as, RAnalOp *op, ut64 offset, ut8 *buf, int len, 
 static int show_analinfo(RAsmState *as, const char *arg, ut64 offset) {
 	ut8 *buf = (ut8 *)strdup ((const char *)arg);
 	int ret, len = r_hex_str2bin ((char *)buf, buf);
-	PJ *pj = pj_new ();
-	if (!pj) {
-		free (buf);
-		return 0;
-	}
+	PJ *pj = NULL;
 	RAnalOp aop = { 0 };
 	if (as->opt.json) {
+		pj = pj_new ();
+		if (!pj) {
+			free (buf);
+			return 0;
+		}
 		pj_a (pj);
 	}
 	for (ret = 0; ret < len;) {
@@ -176,13 +177,16 @@ static int show_analinfo(RAsmState *as, const char *arg, ut64 offset) {
 		}
 		if (aop.size < 1) {
 			if (as->opt.json) {
+				char *bytes = r_hex_bin2strdup (buf, ret);
 				pj_o (pj);
-				pj_ks (pj, "bytes", r_hex_bin2strdup (buf, ret));
+				pj_ks (pj, "bytes", bytes);
 				pj_ks (pj, "type", "Invalid");
 				pj_end (pj);
+				free (bytes);
 			} else {
 				R_LOG_ERROR ("Invalid");
 			}
+			r_anal_op_fini (&aop);
 			break;
 		}
 		showanal (as, &aop, offset, buf + ret, len - ret, pj);
@@ -192,8 +196,8 @@ static int show_analinfo(RAsmState *as, const char *arg, ut64 offset) {
 	if (as->opt.json) {
 		pj_end (pj);
 		printf ("%s\n", pj_string (pj));
-		pj_free (pj);
 	}
+	pj_free (pj);
 	free (buf);
 	return ret;
 }
