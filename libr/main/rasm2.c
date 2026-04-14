@@ -1125,10 +1125,7 @@ R_API int r_main_rasm2(int argc, const char *argv[]) {
 					}
 				}
 				if (!as->opt.bin || !dis) {
-					int buflen = strlen ((const char *)buf);
-					if (buf[buflen] == '\n') {
-						buf[buflen - 1] = '\0';
-					}
+					length = r_str_ntrim ((char *)buf, length);
 				}
 				if (dis) {
 					ret = rasm_disasm (as, offset, (char *)buf, length, bits, dis - 1);
