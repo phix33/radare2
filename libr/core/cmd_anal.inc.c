@@ -5067,8 +5067,12 @@ static char *print_fcn_arg(RCore *core, const char *type, const char *name, cons
 	}
 	char *argstr = NULL;
 	if (addr != UT32_MAX && addr != UT64_MAX  && addr != 0) {
-		char *res = r_core_cmd_strf (core, "pfq %s%s %s @ 0x%08" PFMT64x,
-			(on_stack == 1) ? "*" : "", fmt, name, addr);
+		char *safe_name = r_str_sanitize_r2 (name);
+		char *cmd = r_str_newf ("pfq %s%s %s",
+			(on_stack == 1) ? "*" : "", fmt, safe_name);
+		char *res = r_core_call_str_at (core, addr, cmd);
+		free (cmd);
+		free (safe_name);
 		r_str_trim (res);
 		if (r_str_startswith (res, "\"\\xff\\xff")) {
 			argstr = strdup ("\"\"");
