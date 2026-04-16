@@ -51,6 +51,17 @@ static char *get_project_script_path(RCore *core, const char *file) {
 	return prjfile;
 }
 
+static bool project_path_is_within_projects_dir(RCore *core, const char *path) {
+	char *pdir = r_file_abspath (r_config_get (core->config, "dir.projects"));
+	char *ppath = r_file_abspath (path);
+	char *prefix = (pdir && ppath) ? r_str_newf ("%s%s", pdir, R_SYS_DIR) : NULL;
+	bool inside = prefix ? r_str_startswith (ppath, prefix) : false;
+	free (prefix);
+	free (pdir);
+	free (ppath);
+	return inside;
+}
+
 static bool make_projects_directory(RCore *core) {
 	char *prjdir = r_file_abspath (r_config_get (core->config, "dir.projects"));
 	bool ret = r_sys_mkdirp (prjdir);
@@ -143,6 +154,11 @@ R_API int r_core_project_delete(RCore *core, const char *prjfile) {
 	char *path = get_project_script_path (core, prjfile);
 	if (!path) {
 		R_LOG_ERROR ("Invalid project name '%s'", prjfile);
+		return false;
+	}
+	if (!project_path_is_within_projects_dir (core, path)) {
+		R_LOG_ERROR ("Refusing to delete project outside dir.projects");
+		free (path);
 		return false;
 	}
 	if (r_core_is_project (core, prjfile)) {

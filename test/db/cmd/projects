@@ -638,6 +638,44 @@ EXPECT=<<EOF
 EOF
 RUN
 
+NAME=Reject deleting an absolute-path project outside dir.projects
+FILE=bins/elf/analysis/main
+ARGS=-n
+CMDS=<<EOF
+e prj.vc=false
+e scr.interactive=false
+e dir.projects = .tmp/project-delete-outside-check
+rmrf /tmp/r2r-project-delete-outside-target
+mkdir -p /tmp/r2r-project-delete-outside-target/sub
+?e # r2 rdb project file > /tmp/r2r-project-delete-outside-target/rc.r2
+P- /tmp/r2r-project-delete-outside-target/rc.r2 > /dev/null
+ls -q /tmp/r2r-project-delete-outside-target~sub[0]
+rmrf /tmp/r2r-project-delete-outside-target
+EOF
+EXPECT=<<EOF
+/tmp/r2r-project-delete-outside-target/sub/
+EOF
+RUN
+
+NAME=Allow deleting an absolute-path project inside dir.projects
+FILE=bins/elf/analysis/main
+ARGS=-n
+CMDS=<<EOF
+e prj.vc=false
+e scr.interactive=false
+e dir.projects = /tmp/r2r-project-delete-inside-root
+rmrf /tmp/r2r-project-delete-inside-root
+P+ inside > /dev/null
+ls -q /tmp/r2r-project-delete-inside-root~inside[0]
+P- /tmp/r2r-project-delete-inside-root/inside/rc.r2 > /dev/null
+ls -q /tmp/r2r-project-delete-inside-root~inside[0]
+rmrf /tmp/r2r-project-delete-inside-root
+EOF
+EXPECT=<<EOF
+/tmp/r2r-project-delete-inside-root/inside/
+EOF
+RUN
+
 NAME=Delete a saved project and used directory (with Pd)
 FILE=bins/elf/analysis/main
 ARGS=-n
