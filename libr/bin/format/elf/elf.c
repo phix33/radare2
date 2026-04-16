@@ -1684,6 +1684,9 @@ static ut64 get_import_addr_arm(ELFOBJ *eo, RBinElfReloc *rel) {
 			plt_addr--;
 		}
 		return plt_addr;
+	case R_ARM_GLOB_DAT:
+	case R_ARM_ABS32:
+		return rel->rva;
 	default:
 		R_LOG_WARN ("Unsupported relocation type for imports %d", rel->type);
 		return UT64_MAX;
