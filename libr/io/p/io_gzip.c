@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2008-2024 - pancake */
+/* radare - LGPL - Copyright 2008-2026 - pancake */
 
 #include <r_io.h>
 
@@ -81,19 +81,27 @@ static int __write(RIO *io, RIODesc *fd, const ut8 *buf, int count) {
 }
 
 static bool __resize(RIO *io, RIODesc *fd, ut64 count) {
-	ut8 * new_buf = NULL;
-	if (!fd || !fd->data || count == 0) {
+	if (!fd || !fd->data) {
 		return false;
+	}
+	if (count == 0) {
+		free (_io_malloc_buf (fd));
+		_io_malloc_set_buf (fd, NULL);
+		_io_malloc_set_sz (fd, 0);
+		_io_malloc_set_off (fd, 0);
+		return true;
 	}
 	ut32 mallocsz = _io_malloc_sz (fd);
 	if (_io_malloc_off (fd) > mallocsz) {
 		return false;
 	}
-	new_buf = malloc (count);
+	ut8 *new_buf = malloc (count);
 	if (!new_buf) {
 		return false;
 	}
-	memcpy (new_buf, _io_malloc_buf (fd), R_MIN (count, mallocsz));
+	if (mallocsz > 0) {
+		memcpy (new_buf, _io_malloc_buf (fd), R_MIN (count, mallocsz));
+	}
 	if (count > mallocsz) {
 		memset (new_buf + mallocsz, 0, count - mallocsz);
 	}
@@ -115,7 +123,9 @@ static int __read(RIO *io, RIODesc *fd, ut8 *buf, int count) {
 	if (_io_malloc_off (fd) + count >= mallocsz) {
 		count = mallocsz - _io_malloc_off (fd);
 	}
-	memcpy (buf, _io_malloc_buf (fd) + _io_malloc_off (fd), count);
+	if (count > 0) {
+		memcpy (buf, _io_malloc_buf (fd) + _io_malloc_off (fd), count);
+	}
 	return count;
 }
 
