@@ -1765,6 +1765,7 @@ RList* gdbr_pids_list(libgdbr_t *g, int pid) {
 			dpid->runnable = true;
 			dpid->status = R_DBG_PROC_STOP;
 			r_list_append (list, dpid);
+			dpid = NULL;
 			ptr = ptr2;
 		}
 		if (send_msg (g, "qsThreadInfo") < 0 || read_packet (g, false) < 0
@@ -1782,7 +1783,10 @@ RList* gdbr_pids_list(libgdbr_t *g, int pid) {
 end:
 	gdbr_lock_leave (g);
 	if (ret != 0) {
-		free (dpid);
+		if (dpid) {
+			free (dpid->path);
+			free (dpid);
+		}
 		// We can't use r_debug_pid_free here
 		if (list) {
 			r_list_foreach (list, iter, dpid) {
@@ -1857,6 +1861,7 @@ RList* gdbr_threads_list(libgdbr_t *g, int pid) {
 			// TODO: Implement getting correct thread status from GDB
 			dpid->status = R_DBG_PROC_STOP;
 			r_list_append (list, dpid);
+			dpid = NULL;
 			ptr = ptr2;
 		}
 		if (send_msg (g, "qsThreadInfo") < 0 || read_packet (g, false) < 0
@@ -1880,7 +1885,10 @@ RList* gdbr_threads_list(libgdbr_t *g, int pid) {
 end:
 	gdbr_lock_leave (g);
 	if (ret != 0) {
-		free (dpid);
+		if (dpid) {
+			free (dpid->path);
+			free (dpid);
+		}
 		// We can't use r_debug_pid_free here
 		if (list) {
 			r_list_foreach (list, iter, dpid) {
