@@ -140,6 +140,7 @@ typedef struct {
 	char *homepath;
 	char *d;
 	int printfmt;
+	bool show_all;
 } PathInfo;
 
 static PathInfo *resolve_path_info(const char *input) {
@@ -152,6 +153,7 @@ static PathInfo *resolve_path_info(const char *input) {
 	char *d = NULL;
 	char *pattern = NULL;
 	int printfmt = 0;
+	bool show_all = false;
 	if (!input) {
 		input = "";
 		path = ".";
@@ -176,31 +178,38 @@ static PathInfo *resolve_path_info(const char *input) {
 	input = r_str_trim_head_ro (input);
 	if (*input) {
 		if (r_str_startswith (input, "-h") || *input == '?') {
-			R_LOG_INFO ("Usage: ls [-e,-l,-j,-q] [path] # long, json, quiet");
+			R_LOG_INFO ("Usage: ls [-a,-e,-l,-j,-q] [path] # all, long, json, quiet");
 			free (pi);
 			return NULL;
 		}
 		if (*input == '-') {
-			switch (input[1]) {
-			case 'e':
-				printfmt = FMT_EMOJI;
-				path = r_str_trim_head_ro (input + 2);
-				break;
-			case 'q':
-				printfmt = FMT_QUIET;
-				path = r_str_trim_head_ro (input + 2);
-				break;
-			case 'l':
-			case 'j':
-				printfmt = (input[1] == 'j')? FMT_JSON: FMT_RAW;
-				path = r_str_trim_head_ro (input + 2);
-				if (!*path) {
-					path = ".";
+			const char *flags = input + 1;
+			while (*flags && *flags != ' ') {
+				switch (*flags) {
+				case 'a':
+					show_all = true;
+					break;
+				case 'e':
+					printfmt = FMT_EMOJI;
+					break;
+				case 'q':
+					printfmt = FMT_QUIET;
+					break;
+				case 'l':
+					printfmt = FMT_RAW;
+					break;
+				case 'j':
+					printfmt = FMT_JSON;
+					break;
+				default:
+					R_LOG_ERROR ("Unknown flag '%c' in %s", *flags, input);
+					break;
 				}
-				break;
-			default:
-				R_LOG_ERROR ("Unknown flag %s", input);
-				break;
+				flags++;
+			}
+			path = r_str_trim_head_ro (flags);
+			if (!*path) {
+				path = ".";
 			}
 		} else {
 			path = input;
@@ -246,6 +255,7 @@ static PathInfo *resolve_path_info(const char *input) {
 	pi->homepath = homepath;
 	pi->d = d;
 	pi->printfmt = printfmt;
+	pi->show_all = show_all;
 	return pi;
 }
 
@@ -315,7 +325,7 @@ R_API char *r_syscmd_ls(const char *input, int cons_width) {
 	int linelen = 0;
 	bool lacks_newline = false;
 	r_list_foreach (files, iter, name) {
-		if (*name == '.') {
+		if (!pi->show_all && *name == '.' && *pi->pattern != '.') {
 			continue;
 		}
 		char *n = r_str_newf ("%s%s", dir, name);
