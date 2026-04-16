@@ -990,7 +990,7 @@ RList *linux_thread_list(RDebug *dbg, int pid, RList *list) {
 	r_cons_printf (cons, "foo = 0x%04lx          \n", (fpregs).foo);\
 	r_cons_printf (cons, "fos = 0x%04lx              ", (fpregs).fos)
 
-static void print_fpu(RCons *cons, void *f) {
+static void print_fpu(RCons *cons, void *f, int bits) {
 	if (!f) {
 		R_LOG_WARN ("getfpregs not implemented");
 		return;
@@ -998,6 +998,8 @@ static void print_fpu(RCons *cons, void *f) {
 #if __x86_64__
 	int i,j;
 	struct user_fpregs_struct fpregs = *(struct user_fpregs_struct *)f;
+	const bool is32 = R_SYS_BITS_CHECK (bits, 32);
+	const int nxmm = is32? 8: 16;
 #if __ANDROID__
 	PRINT_FPU (cons, fpregs);
 	for (i = 0;i < 8; i++) {
@@ -1012,10 +1014,10 @@ static void print_fpu(RCons *cons, void *f) {
 			c[0], (float) f[1], c[1]);
 	}
 #else
-	r_cons_printf (cons, "---- x86-64 ----\n");
+	r_cons_printf (cons, "---- %s ----\n", is32? "x86-32": "x86-64");
 	PRINT_FPU (cons, fpregs);
 	r_cons_printf (cons, "size = 0x%08x\n", (ut32)sizeof (fpregs));
-	for (i = 0; i < 16; i++) {
+	for (i = 0; i < nxmm; i++) {
 		ut32 *a = (ut32 *)&fpregs.xmm_space;
 		a = a + (i * 4);
 		r_cons_printf (cons, "xmm%d = %08x %08x %08x %08x   ", i, (int)a[0], (int)a[1],
@@ -1315,7 +1317,7 @@ bool linux_reg_read(RDebug *dbg, int type, ut8 *buf, int size) {
 				return false;
 			}
 			if (showfpu) {
-				print_fpu (cons, (void *)&fpregs);
+				print_fpu (cons, (void *)&fpregs, dbg->bits);
 			}
 			size = R_MIN (sizeof (fpregs), size);
 			memcpy (buf, &fpregs, size);
@@ -1326,7 +1328,7 @@ bool linux_reg_read(RDebug *dbg, int type, ut8 *buf, int size) {
 			ret = r_debug_ptrace (dbg, PTRACE_GETFPXREGS, pid, NULL, &fpxregs);
 			if (ret == 0) {
 				if (showfpu) {
-					print_fpu (cons, (void *)&fpxregs);
+					print_fpu (cons, (void *)&fpxregs, dbg->bits);
 				}
 				size = R_MIN (sizeof (fpxregs), size);
 				memcpy (buf, &fpxregs, size);
@@ -1334,7 +1336,7 @@ bool linux_reg_read(RDebug *dbg, int type, ut8 *buf, int size) {
 			} else {
 				ret = r_debug_ptrace (dbg, PTRACE_GETFPREGS, pid, NULL, &fpregs);
 				if (showfpu) {
-					print_fpu (cons, (void *)&fpregs);
+					print_fpu (cons, (void *)&fpregs, dbg->bits);
 				}
 				if (ret != 0) {
 					r_sys_perror ("PTRACE_GETFPREGS");
@@ -1347,7 +1349,7 @@ bool linux_reg_read(RDebug *dbg, int type, ut8 *buf, int size) {
 #else
 			ret = r_debug_ptrace (dbg, PTRACE_GETFPREGS, pid, NULL, &fpregs);
 			if (showfpu) {
-				print_fpu (cons, (void *)&fpregs);
+				print_fpu (cons, (void *)&fpregs, dbg->bits);
 			}
 			if (ret != 0) {
 				r_sys_perror ("PTRACE_GETFPREGS");
@@ -1375,7 +1377,7 @@ bool linux_reg_read(RDebug *dbg, int type, ut8 *buf, int size) {
 		}
 
 		if (showfpu) {
-			print_fpu (cons, (void *)fpu_regs);
+			print_fpu (cons, (void *)fpu_regs, dbg->bits);
 		}
 
 		size = R_MIN (iov.iov_len, size);
@@ -1383,7 +1385,7 @@ bool linux_reg_read(RDebug *dbg, int type, ut8 *buf, int size) {
 		return size;
 #else
 		if (showfpu) {
-			print_fpu (cons, NULL);
+			print_fpu (cons, NULL, dbg->bits);
 		}
 	#warning getfpregs not implemented for this platform
 #endif
