@@ -1415,7 +1415,8 @@ bool linux_reg_read(RDebug *dbg, int type, ut8 *buf, int size) {
 		}
 		// stitch together xstate.fpstate._xmm and xstate.ymmh assuming LE
 		int ri,rj;
-		for (ri = 0; ri < 16; ri++)	{
+		int nymm = R_SYS_BITS_CHECK (dbg->bits, 32)? 8: 16;
+		for (ri = 0; ri < nymm; ri++)	{
 			for (rj = 0; rj < 4; rj++)	{
 #ifdef __ANDROID__
 				ymm_space[ri*8+rj] = ((struct _libc_fpstate*) &xstate.fpstate)->_xmm[ri].element[rj];
