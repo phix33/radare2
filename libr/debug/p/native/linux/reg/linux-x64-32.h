@@ -56,7 +56,6 @@ return strdup (
 "gpr	df	.1	.1162	0	direction\n"
 "gpr	of	.1	.1163	0	overflow\n"
 "gpr	oeax	.32	120	0\n"
-#if 0
 "drx	dr0	.64	0	0\n"
 "drx	dr1	.64	8	0\n"
 "drx	dr2	.64	16	0\n"
@@ -65,15 +64,6 @@ return strdup (
 // dr5 40
 "drx	dr6	.64	48	0\n"
 "drx	dr7	.64	56	0\n"
-#endif
-"drx	dr0	.32	0	0\n"
-"drx	dr1	.32	4	0\n"
-"drx	dr2	.32	8	0\n"
-"drx	dr3	.32	12	0\n"
-//"drx	dr4	.32	16	0\n"
-//"drx	dr5	.32	20	0\n"
-"drx	dr6	.32	24	0\n"
-"drx	dr7	.32	28	0\n"
 
 /*0030 struct user_fpregs_struct
 0031 {
