@@ -58,6 +58,7 @@ return strdup (
 "flg	if	.1	.1161	0	interrupt\n"
 "flg	df	.1	.1162	0	direction\n"
 "flg	of	.1	.1163	0	overflow\n"
+"gpr	eiz	.32	?	0\n"
 "gpr	oeax	.32	120	0\n"
 "drx	dr0	.64	0	0\n"
 "drx	dr1	.64	8	0\n"
