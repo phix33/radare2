@@ -39,7 +39,7 @@ return strdup (
 "gpr	eip	.32	128	0\n"
 "gpr	ip	.16	128	0\n"
 "seg@gpr	xfs	.32	200	0\n"
-"seg@gpr	xgs	.32	208	0\n"
+"seg@gpr	xgs	.64	208	0\n"
 "seg@gpr	xcs	.32	136	0\n"
 "seg@gpr	cs	.16	136	0\n"
 "seg@gpr	xss	.32	160	0\n"
