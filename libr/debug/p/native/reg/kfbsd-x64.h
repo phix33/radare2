@@ -77,7 +77,7 @@ return strdup (
 "gpr	rip	.64	136	0\n"
 "seg	cs	.64	144	0\n"
 "gpr	rflags	.64	152	0	c1p.a.zstido.n.rv\n"
-"flg	eflags	.32	152	0	c1p.a.zstido.n.rv\n"
+"gpr	eflags	.32	152	0	c1p.a.zstido.n.rv\n"
 "gpr	rsp	.64	160	0\n"
 "seg	ss	.64	168	0\n"
 "flg	cf	.1	.1216	0	carry\n"
