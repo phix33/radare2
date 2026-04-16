@@ -529,6 +529,84 @@ bool test_r_cfloat_multiword_io(void) {
 	mu_end;
 }
 
+bool test_r_reg_x87_multi_offset(void) {
+	// Mimics the real user_fpregs_struct layout: st0-st7 are .80 regs
+	// at 16-byte intervals starting at offset 32 bytes into the arena.
+	// This tests that arena sizing, get_value_big, and longdouble
+	// round-trip all work for .80 regs at non-zero offsets.
+	RReg *reg = r_reg_new ();
+	mu_assert_notnull (reg, "r_reg_new () failed");
+
+	r_reg_set_profile_string (reg,
+		"=A0 st0\n"
+		"fpu cwd .16 0 0\n"
+		"fpu swd .16 2 0\n"
+		"fpu ftw .16 4 0\n"
+		"fpu fop .16 6 0\n"
+		"fpu frip .64 8 0\n"
+		"fpu frdp .64 16 0\n"
+		"fpu mxcsr .32 24 0\n"
+		"fpu mxcr_mask .32 28 0\n"
+		"fpu st0 .80 32 0\n"
+		"fpu st1 .80 48 0\n"
+		"fpu st2 .80 64 0\n"
+		"fpu st3 .80 80 0\n"
+		"fpu st4 .80 96 0\n"
+		"fpu st5 .80 112 0\n"
+		"fpu st6 .80 128 0\n"
+		"fpu st7 .80 144 0\n");
+
+	r_reg_fit_arena (reg);
+
+	// Arena must cover st7 at offset 144, size 10 bytes = 154 bytes minimum
+	RRegArena *arena = reg->regset[R_REG_TYPE_FPU].arena;
+	mu_assert_notnull (arena, "FPU arena exists");
+	mu_assert ("arena >= 154 bytes", arena->size >= 154);
+
+	// Round-trip longdouble for each st register at its real offset
+	const char *names[] = { "st0","st1","st2","st3","st4","st5","st6","st7" };
+	long double vals[] = { 1.0L, 2.0L, 3.0L, 4.0L, 5.0L, 6.0L, 7.0L, 8.0L };
+	int i;
+	for (i = 0; i < 8; i++) {
+		RRegItem *ri = r_reg_get (reg, names[i], R_REG_TYPE_FPU);
+		mu_assert_notnull (ri, names[i]);
+		r_reg_set_longdouble (reg, ri, vals[i]);
+	}
+	for (i = 0; i < 8; i++) {
+		RRegItem *ri = r_reg_get (reg, names[i], R_REG_TYPE_FPU);
+		long double got = r_reg_get_longdouble (reg, ri);
+		char msg[64];
+		snprintf (msg, sizeof (msg), "%s round-trip", names[i]);
+		mu_assert (msg, fabsl (got - vals[i]) < 0.0001L);
+	}
+
+	// Verify r_reg_get_value_big works for .80 at non-zero offset
+	RRegItem *st7 = r_reg_get (reg, "st7", R_REG_TYPE_FPU);
+	mu_assert_notnull (st7, "st7 lookup");
+	mu_assert_eq (st7->size, 80, "st7 is 80 bits");
+	mu_assert_eq (BITS2BYTES (st7->offset), 144, "st7 offset is 144 bytes");
+	utX val;
+	memset (&val, 0, sizeof (val));
+	ut64 ret = r_reg_get_value_big (reg, st7, &val);
+	// Just verify it doesn't crash and returns something non-zero
+	mu_assert ("st7 get_value_big returns data", ret != 0 || val.v80.High != 0);
+
+	// Write all st regs, then verify no cross-contamination
+	for (i = 0; i < 8; i++) {
+		RRegItem *ri = r_reg_get (reg, names[i], R_REG_TYPE_FPU);
+		r_reg_set_longdouble (reg, ri, 0.0L);
+	}
+	RRegItem *st0 = r_reg_get (reg, "st0", R_REG_TYPE_FPU);
+	r_reg_set_longdouble (reg, st0, 42.0L);
+	// st1 should still be 0
+	RRegItem *st1 = r_reg_get (reg, "st1", R_REG_TYPE_FPU);
+	long double st1_val = r_reg_get_longdouble (reg, st1);
+	mu_assert ("st1 not contaminated by st0 write", fabsl (st1_val) < 0.0001L);
+
+	r_reg_free (reg);
+	mu_end;
+}
+
 bool test_r_reg_clone(void) {
 	RReg *reg = r_reg_new ();
 	mu_assert_notnull (reg, "r_reg_new () failed");
@@ -552,6 +630,7 @@ bool test_r_reg_clone(void) {
 }
 
 int all_tests(void) {
+	mu_run_test (test_r_reg_x87_multi_offset);
 	mu_run_test (test_r_reg_clone);
 	mu_run_test (test_r_reg_set_name);
 	mu_run_test (test_r_reg_set_profile_string);
