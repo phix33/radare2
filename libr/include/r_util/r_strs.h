@@ -153,8 +153,24 @@ static inline bool r_strs_split_strs(RStrs s, RStrs sep, RStrs *head, RStrs *tai
 
 /* Conversion (out of line) */
 R_API char *r_strs_tostring(RStrs s);
-R_API ut64 r_strs_tonum(RStrs s);
 R_API st64 r_strs_tosnum(RStrs s, bool *ok);
+
+/* Parse a slice as an unsigned integer, respecting slice bounds (no strlen,
+ * no malloc). Only recognises plain integer literals — for richer syntax
+ * (signed, 0b, 0o, 0t, expressions, …) call r_num_get.
+ *
+ *   base = 0   auto-detect: "0x" / "0X" prefix → hex, else decimal
+ *   base = 10  decimal only (digits)
+ *   base = 16  hex (optional "0x" / "0X" prefix, then hex digits)
+ *
+ * If error is non-NULL, *error is set to true on empty/malformed input and
+ * false on success. On error the return value is 0. */
+R_API ut64 r_strs_tonum(RStrs s, int base, bool *error);
+
+/* Write `n` as a "0x…" hex string into `buf` (capacity `cap`) and return the
+ * resulting slice. `cap` must be at least 19 (worst case: "0x" + 16 hex + NUL).
+ * On overflow returns an empty RStrs. Buf is always NUL-terminated on success. */
+R_API RStrs r_strs_u64hex(char *buf, size_t cap, ut64 n);
 
 #ifdef __cplusplus
 }

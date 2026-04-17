@@ -209,7 +209,13 @@ typedef struct r_esil_options_t {
 
 typedef struct r_esil_t {
 	struct r_anal_t *anal; // required for io, reg, and call esil_init/fini of the selected arch plugin
-	char **stack;
+	// Heapless stack: entries are RStrs slices into `stack_buf`, an append-only
+	// arena that is reset on r_esil_stack_free. Within one expression, popped
+	// slices stay valid across subsequent pushes — the arena never moves.
+	RStrs *stack;
+	char *stack_buf;
+	ut32 stack_buf_cap;
+	ut32 stack_buf_len;
 	ut64 addrmask;
 	int stacksize;
 	int stackptr;
@@ -235,7 +241,7 @@ typedef struct r_esil_t {
 	ut64 old;	//used for carry-flagging and borrow-flagging
 	ut64 cur;	//used for carry-flagging and borrow-flagging
 	ut8 lastsz;	//in bits //used for signature-flag
-	/* native ops and custom ops */
+	/* native ops and custom ops — HtPP keyed by RStrs slice */
 	HtPP *ops;
 	struct r_esil_plugin_t *curplug; // ???
 	char *current_opstr;
@@ -328,11 +334,8 @@ R_API bool r_esil_reg_write(REsil *esil, const char *name, ut64 val);
 R_API bool r_esil_reg_write_silent(REsil *esil, const char *dst, ut64 val);
 R_API bool r_esil_pushnum(REsil *esil, ut64 num);
 R_API bool r_esil_push(REsil *esil, const char *str);
-#if R2_590
-R_API const char *r_esil_pop(REsil *esil);
-#else
-R_API char *r_esil_pop(REsil *esil);
-#endif
+R_API bool r_esil_push_strs(REsil *esil, RStrs s);
+R_API RStrs r_esil_pop_strs(REsil *esil);
 typedef bool (*REsilOpCb)(REsil *esil);
 
 typedef struct r_esil_operation_t {
@@ -341,6 +344,10 @@ typedef struct r_esil_operation_t {
 	ut32 pop; // amount of operands popped
 	ut32 type;
 	const char *info;
+	// Registered name as a slice. `name.a` is a pointer to the caller's
+	// const char* (string literal) and is NUL-terminated for compat with
+	// callbacks that take `const char *`. Also used as the HT key.
+	RStrs name;
 } REsilOp;
 
 // esil2c
@@ -358,14 +365,16 @@ R_API char*r_esil_opstr(REsil*, int mode);
 
 R_API bool r_esil_set_op(REsil *esil, const char *op, REsilOpCb code, ut32 push, ut32 pop, ut32 type, const char *info);
 R_API REsilOp *r_esil_get_op(REsil *esil, const char *op);
+R_API REsilOp *r_esil_get_op_strs(REsil *esil, RStrs w);
 R_API void r_esil_del_op(REsil *esil, const char *op);
 R_API void r_esil_stack_free(REsil *esil);
 R_API int r_esil_condition(REsil *esil, const char *str);
 
-// R2_600 - unify these 3 functions into one
-R_API int r_esil_get_parm_type(REsil *esil, const char *str);
-R_API int r_esil_get_parm(REsil *esil, const char *str, ut64 *num);
-R_API bool r_esil_get_parm_size(REsil *esil, const char *str, ut64 *num, int *size);
+// Slice-native parm accessors. Fast path — open-coded slice scans avoid
+// routing through NUL-term versions at -O0 where static inlines don't inline.
+R_API int r_esil_get_parm_type_strs(REsil *esil, RStrs s);
+R_API bool r_esil_get_parm_size_strs(REsil *esil, RStrs s, ut64 *num, int *size);
+R_API bool r_esil_get_parm_strs(REsil *esil, RStrs s, ut64 *num);
 
 // esil_handler.c
 R_API bool r_esil_handlers_init(REsil *esil);

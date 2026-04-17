@@ -85,21 +85,109 @@ R_API char *r_strs_tostring(RStrs s) {
 	return r_str_ndup (s.a, (int)r_strs_len (s));
 }
 
-R_API ut64 r_strs_tonum(RStrs s) {
-	char buf[64];
+R_API ut64 r_strs_tonum(RStrs s, int base, bool *error) {
+	if (error) {
+		*error = false;
+	}
 	const size_t n = r_strs_len (s);
 	if (n == 0) {
+		if (error) {
+			*error = true;
+		}
 		return 0;
 	}
-	if (n < sizeof (buf)) {
-		memcpy (buf, s.a, n);
-		buf[n] = 0;
-		return r_num_get (NULL, buf);
+	const char *p = s.a;
+	const char *const e = s.b;
+	bool is_hex;
+	switch (base) {
+	case 16:
+		is_hex = true;
+		if (n >= 2 && p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) {
+			p += 2;
+		}
+		break;
+	case 10:
+		is_hex = false;
+		break;
+	case 0:
+		if (n >= 2 && p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) {
+			is_hex = true;
+			p += 2;
+		} else {
+			is_hex = false;
+		}
+		break;
+	default:
+		if (error) {
+			*error = true;
+		}
+		return 0;
 	}
-	char *tmp = r_strs_tostring (s);
-	const ut64 r = tmp? r_num_get (NULL, tmp): 0;
-	free (tmp);
-	return r;
+	if (p >= e) {
+		if (error) {
+			*error = true;
+		}
+		return 0;
+	}
+	ut64 v = 0;
+	if (is_hex) {
+		while (p < e) {
+			const unsigned char c = (unsigned char)*p++;
+			ut64 d;
+			if (c >= '0' && c <= '9') {
+				d = c - '0';
+			} else if (c >= 'a' && c <= 'f') {
+				d = c - 'a' + 10;
+			} else if (c >= 'A' && c <= 'F') {
+				d = c - 'A' + 10;
+			} else {
+				if (error) {
+					*error = true;
+				}
+				return 0;
+			}
+			v = (v << 4) | d;
+		}
+	} else {
+		while (p < e) {
+			const unsigned char c = (unsigned char)*p++;
+			if (c < '0' || c > '9') {
+				if (error) {
+					*error = true;
+				}
+				return 0;
+			}
+			v = v * 10 + (c - '0');
+		}
+	}
+	return v;
+}
+
+R_API RStrs r_strs_u64hex(char *buf, size_t cap, ut64 n) {
+	if (!buf || cap < 19) {
+		return (RStrs) { NULL, NULL };
+	}
+	if (n == 0) {
+		buf[0] = '0';
+		buf[1] = '\0';
+		return r_strs_from_len (buf, 1);
+	}
+	static const char lookup[] = "0123456789abcdef";
+	char tmp[16];
+	int t = 0;
+	while (n) {
+		tmp[t++] = lookup[n & 0xf];
+		n >>= 4;
+	}
+	buf[0] = '0';
+	buf[1] = 'x';
+	int j;
+	for (j = 0; j < t; j++) {
+		buf[2 + j] = tmp[t - 1 - j];
+	}
+	const size_t len = (size_t)(t + 2);
+	buf[len] = '\0';
+	return r_strs_from_len (buf, len);
 }
 
 R_API st64 r_strs_tosnum(RStrs s, bool *ok) {
