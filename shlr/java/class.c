@@ -924,43 +924,35 @@ static void r_bin_java_get_field_json_definition(RBinJavaObj *bin, RBinJavaField
 }
 
 static int r_bin_java_extract_reference_name(const char *input_str, char **ref_str, ut8 array_cnt) {
-	char *new_str = NULL;
-	ut32 str_len = array_cnt? (array_cnt + 1) * 2: 0;
-	const char *str_pos = input_str;
-	int len = 0;
-	if (!str_pos || *str_pos != 'L' || !*str_pos) {
+	if (!input_str || *input_str != 'L') {
 		return -1;
 	}
-	str_pos++;
-	while (*str_pos && *str_pos != ';') {
-		str_pos++;
-		len++;
+	const char *end = strchr (input_str + 1, ';');
+	if (!end) {
+		return -1;
 	}
-	str_pos = input_str + 1;
+	int len = end - input_str - 1;
 	free (*ref_str);
-	str_len += len;
-	*ref_str = malloc (str_len + 1);
-	new_str = *ref_str;
-	memcpy (new_str, str_pos, str_len);
-	new_str[str_len] = 0;
-	while (*new_str) {
-		if (*new_str == '/') {
-			*new_str = '.';
-		}
-		new_str++;
+	char *name = r_str_ndup (input_str + 1, len);
+	r_str_replace_ch (name, '/', '.', true);
+	if (array_cnt > 0) {
+		char *brackets = r_str_repeat ("[]", array_cnt);
+		*ref_str = r_str_newf ("%s%s", name, brackets);
+		free (name);
+		free (brackets);
+	} else {
+		*ref_str = name;
 	}
 	return len + 2;
 }
 
 R_API char *get_type_value_str(const char *arg_str, ut8 array_cnt) {
-	ut32 str_len = array_cnt? (array_cnt + 1) * 2 + strlen (arg_str): strlen (arg_str);
-	char *str = malloc (str_len + 1);
-	ut32 bytes_written = snprintf (str, str_len + 1, "%s", arg_str);
-	while (array_cnt > 0) {
-		strcpy (str + bytes_written, "[]");
-		bytes_written += 2;
-		array_cnt--;
+	if (array_cnt == 0) {
+		return strdup (arg_str);
 	}
+	char *brackets = r_str_repeat ("[]", array_cnt);
+	char *str = r_str_newf ("%s%s", arg_str, brackets);
+	free (brackets);
 	return str;
 }
 
