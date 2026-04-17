@@ -65,11 +65,6 @@ EXPECT=<<EOF
       "message": "Running plugin pre-analysis hooks"
     },
     {
-      "type": "WARN",
-      "origin": "config",
-      "message": "Variable 'anal.plugins.pre' not found"
-    },
-    {
       "type": "INFO",
       "origin": "logline",
       "message": "Analyze all functions arguments/locals (afva@@F)"

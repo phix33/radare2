@@ -4022,6 +4022,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETCB ("anal.bb.maxsize", "64K", &cb_anal_bb_max_size, "maximum basic block size");
 	SETCB ("anal.pushret", "false", &cb_anal_pushret, "analyze push+ret as jmp");
 	SETCB ("types.plugin", "", &cb_anal_types_parser, "use the new c parser instead of tcc");
+	SETS ("anal.plugins.pre", "", "ordered comma-separated list of analysis plugins for pre_analysis callbacks");
 	SETS ("anal.plugins.fcn", "", "ordered comma-separated list of analysis plugins for analyze_fcn callbacks");
 	SETS ("anal.plugins.vars", "", "ordered comma-separated list of analysis plugins for recover_vars callbacks");
 	SETS ("anal.plugins.datarefs", "", "ordered comma-separated list of analysis plugins for get_data_refs callbacks");
