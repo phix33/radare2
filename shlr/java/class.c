@@ -960,13 +960,11 @@ static int extract_type_value(const char *arg_str, char **output) {
 	if (!arg_str || !output) {
 		return 0;
 	}
-	if (*output) {
-		R_FREE (*output);
-	}
+	R_FREE (*output);
 	ut8 array_cnt = 0;
 	int consumed = 0;
-	char *str = NULL;
 	while (*arg_str) {
+		char *str = NULL;
 		int len = 1;
 		// handle the end of an object
 		switch (*arg_str) {
@@ -1022,13 +1020,14 @@ static int extract_type_value(const char *arg_str, char **output) {
 			return 0;
 		}
 		if (len < 1) {
+			free (str);
 			break;
 		}
 		consumed += len;
 		arg_str += len;
 		if (str) {
 			*output = str;
-			break;
+			return consumed;
 		}
 	}
 	return consumed;
