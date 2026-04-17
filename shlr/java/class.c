@@ -956,18 +956,18 @@ R_API char *get_type_value_str(const char *arg_str, ut8 array_cnt) {
 	return str;
 }
 
-R_API int extract_type_value(const char *arg_str, char **output) {
-	ut8 found_one = 0, array_cnt = 0;
-	ut32 len = 0, consumed = 0;
-	char *str = NULL;
+static int extract_type_value(const char *arg_str, char **output) {
 	if (!arg_str || !output) {
 		return 0;
 	}
-	if (output && *output && *output != NULL) {
+	if (*output) {
 		R_FREE (*output);
 	}
-	while (arg_str && *arg_str && !found_one) {
-		len = 1;
+	ut8 array_cnt = 0;
+	int consumed = 0;
+	char *str = NULL;
+	while (*arg_str) {
+		int len = 1;
 		// handle the end of an object
 		switch (*arg_str) {
 		case 'V':
