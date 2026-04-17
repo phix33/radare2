@@ -1046,23 +1046,24 @@ static bool edf_consume_1_get_mem_push_1(REsil *esil) {
 	} else if (src_type == R_ESIL_PARM_NUM) {
 		src_node = _edf_const_get (edf, src);
 		ut64 src_addr;
-		r_esil_get_parm_strs (esil, src_s, &src_addr);
-		mem_src_node = _edf_mem_get (edf, src_addr, mem_size);
+		if (r_esil_get_parm_strs (esil, src_s, &src_addr)) {
+			mem_src_node = _edf_mem_get (edf, src_addr, mem_size);
+		}
 	} else {
 		src_node = _edf_var_get (edf, src);
 		// cannot fail, bc src cannot be NULL
 		if (((RAnalEsilDFGNode *)src_node->data)->type & R_ANAL_ESIL_DFG_TAG_CONST) {
-			//		if (_edf_is_stack_or_mem_const_node (edf, src_node)) {
 			RStrBuf *expr = filter_gnode_expr (edf, src_node);
 			r_esil_parse (edf->esil, r_strbuf_get (expr));
 			const RStrs src_addr_str = r_esil_pop_strs (edf->esil);
 			R_LOG_DEBUG ("resolved: %s => %s", r_strbuf_get (expr), r_strs_empty (src_addr_str)? "": src_addr_str.a);
 			r_strbuf_free (expr);
 			ut64 src_addr;
-			r_esil_get_parm_strs (esil, src_addr_str, &src_addr);
+			if (r_esil_get_parm_strs (esil, src_addr_str, &src_addr)) {
+				mem_src_node = _edf_mem_get (edf, src_addr, mem_size);
+			}
 			r_esil_stack_free (edf->esil);
 			edf->iob.system (edf->iob.io, "reset");
-			mem_src_node = _edf_mem_get (edf, src_addr, mem_size);
 		}
 	}
 
