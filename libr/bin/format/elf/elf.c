@@ -4874,13 +4874,13 @@ typedef struct {
 	int nsym;
 	int import_count;
 	RVecRBinElfSymbol *ret;
-	Elf_(Addr) addr_sym_table;
+	ut64 addr_sym_table;
 } ReadPhdrSymbolState;
 
 static bool _read_symbols_from_phdr(ELFOBJ *eo, ReadPhdrSymbolState *state) {
 	int type = state->type;
 	RVecRBinElfSymbol *ret = state->ret; // TODO: rename to elf_symbols_vec
-	Elf_(Addr) addr_sym_table = state->addr_sym_table;
+	ut64 addr_sym_table = state->addr_sym_table;
 	int i;
 	for (i = 1; i < state->nsym; i++) {
 		// Read in one entry
@@ -5043,11 +5043,11 @@ static RVecRBinElfSymbol* load_symbols_from_phdr(ELFOBJ *eo, int type) {
 		return NULL;
 	}
 
-	Elf_(Addr) addr_sym_table = Elf_(v2p) (eo, di->dt_symtab);
+	ut64 addr_sym_table = Elf_(v2p) (eo, di->dt_symtab);
 	if (addr_sym_table == UT64_MAX) {
 		return NULL;
 	}
-	ut32 sym_size = di->dt_syment;
+	const ut32 sym_size = di->dt_syment;
 	if (!sym_size) {
 		return NULL;
 	}
