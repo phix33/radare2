@@ -1258,12 +1258,15 @@ static void print_func_with_offsets(RCore *core, Sdb *TDB, const char *arg) {
 
 		int args = sdb_num_get (TDB, r_strf ("func.%s.args", name), 0);
 		const char *ret = sdb_const_get (TDB, r_strf ("func.%s.ret", name), 0);
-		const char *cc = sdb_const_get (TDB, r_strf ("func.%s.cc", name), 0);
 		if (!ret) {
 			ret = "void";
 		}
+		const char *cc = sdb_const_get (TDB, r_strf ("func.%s.cc", name), 0);
 		if (!cc) {
 			cc = r_anal_cc_default (core->anal);
+			if (!cc) {
+				cc = "cdecl";
+			}
 		}
 
 		if (show_xrefs) {
