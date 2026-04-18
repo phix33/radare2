@@ -4551,7 +4551,7 @@ R_API int r_core_config_init(RCore *core) {
 	// __arm__ || __mips__ || __loongarch__
 	SETICB ("dbg.bpsize", 4, &cb_dbgbpsize, "size of software breakpoints");
 #endif
-	SETB ("dbg.bpsysign", "true", "ignore unknown/system breakpoints (disable to stop on loader breakpoints)");
+	SETB ("dbg.bpsysign", "false", "ignore unknown/system breakpoints (disable to stop on loader breakpoints)");
 	SETCB ("dbg.bpinmaps", "true", &cb_dbg_bpinmaps, "activate breakpoints only if they are inside a valid map");
 	SETB ("dbg.bpforuntil", "true", "honor breakpoints when performing 'dcu', 'dsu'");
 	SETICB ("dbg.btdepth", 128, &cb_dbgbtdepth, "depth of backtrace");
