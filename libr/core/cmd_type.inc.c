@@ -1547,7 +1547,7 @@ static void printFunctionTypeJson(TypePrintCtx *ctx, const char *input) {
 		cc = r_anal_cc_default (core->anal);
 	}
 	int max_cc_args = cc ? r_anal_cc_max_arg (core->anal, cc) : 0;
-	const char *ret_reg = r_anal_cc_ret (core->anal, cc);
+	const char *ret_reg = cc? r_anal_cc_ret (core->anal, cc): NULL;
 	const char *err_reg = cc ? r_anal_cc_error (core->anal, cc) : NULL;
 
 	pj_o (pj);
