@@ -1274,10 +1274,16 @@ repeat:
 			}
 		}
 	}
-	if (reason == R_DEBUG_REASON_BREAKPOINT &&
-	   ((bp && !bp->enabled) || (!bp && !r_cons_is_breaked (cons) && dbg->coreb.core &&
-					dbg->coreb.cfgGetI (dbg->coreb.core, "dbg.bpsysign")))) {
-		goto repeat;
+	if (reason == R_DEBUG_REASON_BREAKPOINT) {
+		if (bp && !bp->enabled) {
+			goto repeat;
+		}
+		if (!bp && !r_cons_is_breaked (cons) && dbg->coreb.core
+				&& dbg->coreb.cfgGetI (dbg->coreb.core, "dbg.bpsysign")) {
+			ut64 pc = r_debug_reg_get (dbg, "PC");
+			R_LOG_INFO ("Skipping unknown breakpoint at 0x%08"PFMT64x" (set dbg.bpsysign=false to stop here)", pc);
+			goto repeat;
+		}
 	}
 
 #if __linux__
