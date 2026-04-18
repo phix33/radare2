@@ -9,6 +9,8 @@
 extern "C" {
 #endif
 
+#define R_CODEMETA_USE_RBTREE 1
+
 typedef enum r_syntax_highlight_type_t {
 	R_SYNTAX_HIGHLIGHT_TYPE_KEYWORD,
 	R_SYNTAX_HIGHLIGHT_TYPE_COMMENT,
@@ -67,8 +69,10 @@ R_VEC_TYPE (RVecCodeMetaOffset, ut64);
 typedef struct r_codemeta_t {
 	char *code; /**< Decompiled code. RCodeMeta owns this string and it must free it. */
 	RVecCodeMetaItem annotations; /**< @ref RVecCodeMetaItem contains the list of annotations for the decompiled code. */
+#if R_CODEMETA_USE_RBTREE
 	RRBTree *tree;
 	bool tree_dirty;
+#endif
 } RCodeMeta;
 
 R_API RCodeMeta *r_codemeta_new(const char *code);

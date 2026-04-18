@@ -39,9 +39,11 @@ R_API RCodeMeta *r_codemeta_clone(RCodeMeta *code) {
 R_API RCodeMeta *R_NONNULL r_codemeta_new(const char *code) {
 	R_RETURN_VAL_IF_FAIL (code, NULL);
 	RCodeMeta *r = R_NEW0 (RCodeMeta);
+#if R_CODEMETA_USE_RBTREE
 	r->tree = r_crbtree_new (NULL);
-	r->code = strdup (code);
 	r->tree_dirty = true;
+#endif
+	r->code = strdup (code);
 	RVecCodeMetaItem_init (&r->annotations);
 	return r;
 }
@@ -88,12 +90,15 @@ R_API bool r_codemeta_item_is_variable(RCodeMetaItem *mi) {
 R_API void r_codemeta_free(RCodeMeta *code) {
 	if (R_LIKELY (code)) {
 		RVecCodeMetaItem_fini (&code->annotations);
+#if R_CODEMETA_USE_RBTREE
 		r_crbtree_free (code->tree);
+#endif
 		r_free (code->code);
 		r_free (code);
 	}
 }
 
+#if R_CODEMETA_USE_RBTREE
 static int cmp_ins(void *incoming, void *in, void *user) {
 	RCodeMetaItem *mi = in;
 	RCodeMetaItem *mi2 = incoming;
@@ -146,15 +151,19 @@ static int cmp_find_min_mid(void *incoming, void *in, void *user) {
 	}
 	return 1;
 }
+#endif
 
 R_API void r_codemeta_add_item(RCodeMeta *code, RCodeMetaItem *mi) {
 	R_RETURN_IF_FAIL (code && mi);
 	RCodeMetaItem item;
 	r_codemeta_item_copy (&item, mi);
 	RVecCodeMetaItem_push_back (&code->annotations, &item);
+#if R_CODEMETA_USE_RBTREE
 	code->tree_dirty = true;
+#endif
 }
 
+#if R_CODEMETA_USE_RBTREE
 static void codemeta_build_tree(RCodeMeta *code) {
 	if (!code->tree_dirty) {
 		return;
@@ -166,6 +175,7 @@ static void codemeta_build_tree(RCodeMeta *code) {
 	}
 	code->tree_dirty = false;
 }
+#endif
 
 R_API RVecCodeMetaItemPtr *r_codemeta_at(RCodeMeta *code, size_t offset) {
 	R_RETURN_VAL_IF_FAIL (code, NULL);
@@ -174,11 +184,12 @@ R_API RVecCodeMetaItemPtr *r_codemeta_at(RCodeMeta *code, size_t offset) {
 
 R_API RVecCodeMetaItemPtr *r_codemeta_in(RCodeMeta *code, size_t start, size_t end) {
 	R_RETURN_VAL_IF_FAIL (code, NULL);
-	codemeta_build_tree (code);
 	RVecCodeMetaItemPtr *r = RVecCodeMetaItemPtr_new ();
 	if (!r) {
 		return NULL;
 	}
+#if R_CODEMETA_USE_RBTREE
+	codemeta_build_tree (code);
 	size_t search_start = start / 2;
 	RCodeMetaItem *min = NULL;
 	r_crbtree_find (code->tree, &search_start, cmp_find_min_mid, &min);
@@ -201,6 +212,14 @@ R_API RVecCodeMetaItemPtr *r_codemeta_in(RCodeMeta *code, size_t start, size_t e
 			node = r_rbnode_next (node);
 		}
 	}
+#else
+	RCodeMetaItem *mi;
+	R_VEC_FOREACH (&code->annotations, mi) {
+		if (start < mi->end && mi->start < end) {
+			RVecCodeMetaItemPtr_push_back (r, &mi);
+		}
+	}
+#endif
 	return r;
 }
 
