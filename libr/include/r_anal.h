@@ -352,6 +352,7 @@ typedef struct r_anal_function_t {
 	// TODO R2_600 Use RBinName here
 	char *name;
 	char *realname; // R2_590: add realname for the mangled one
+	char *pin; // user-defined pin string (emoji or any utf-8) to mark this function; NULL if not pinned
 	int bits; // ((> bits 0) (set-bits bits))
 	int type;
 	const char *callconv; // calling convention, should come from RAnal.constpool

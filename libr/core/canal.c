@@ -2410,7 +2410,7 @@ R_API char *r_core_anal_fcn_name(RCore *core, RAnalFunction *fcn) {
 	return name;
 }
 
-#define FCN_LIST_VERBOSE_ENTRY "%s0x%0*"PFMT64x" %5d %4"PFMT64d" %5d %5d %5d %4d 0x%0*"PFMT64x" %5"PFMT64d" 0x%0*"PFMT64x" %5d %4d %6d %4d %5d %s%s\n"
+#define FCN_LIST_VERBOSE_ENTRY "%s0x%0*"PFMT64x" %5d %4"PFMT64d" %5d %5d %5d %4d 0x%0*"PFMT64x" %5"PFMT64d" 0x%0*"PFMT64x" %5d %4d %6d %4d %5d %s%s%s%s\n"
 
 static int fcn_print_verbose(RCore *core, RAnalFunction *fcn, bool use_color) {
 	char *name = r_core_anal_fcn_name (core, fcn);
@@ -2450,6 +2450,8 @@ static int fcn_print_verbose(RCore *core, RAnalFunction *fcn, bool use_color) {
 			r_anal_var_count_args (fcn),
 			r_anal_function_count_xrefs (fcn, R_ANAL_REF_TYPE_ANY),
 			fcn->maxstack,
+			fcn->pin? fcn->pin: "",
+			fcn->pin? " ": "",
 			name,
 			color_end);
 	free (name);
@@ -2512,16 +2514,18 @@ static void fcn_print(RCore *core, RAnalFunction *fcn, bool quiet) {
 		const bool use_colors = core->print->flags & R_PRINT_FLAGS_COLOR;
 		char *name = r_core_anal_fcn_name (core, fcn);
 		ut64 realsize = r_anal_function_realsize (fcn);
+		const char *pin = fcn->pin? fcn->pin: "";
+		const char *pinsep = fcn->pin? " ": "";
 		if (use_colors) {
 			RAnalBlock *firstBlock = r_list_first (fcn->bbs);
 			char *color = firstBlock? r_cons_rgb_str (core->cons, NULL, 0, &firstBlock->color): strdup ("");
-			r_cons_printf (core->cons, "%s0x%08"PFMT64x" %4d %6"PFMT64d" %s%s\n",
+			r_cons_printf (core->cons, "%s0x%08"PFMT64x" %4d %6"PFMT64d" %s%s%s%s\n",
 					color, fcn->addr, r_list_length (fcn->bbs),
-					realsize, name, Color_RESET);
+					realsize, pin, pinsep, name, Color_RESET);
 			free (color);
 		} else {
-			r_cons_printf (core->cons, "0x%08"PFMT64x" %4d %6"PFMT64d" %s\n",
-					fcn->addr, r_list_length (fcn->bbs), realsize, name);
+			r_cons_printf (core->cons, "0x%08"PFMT64x" %4d %6"PFMT64d" %s%s%s\n",
+					fcn->addr, r_list_length (fcn->bbs), realsize, pin, pinsep, name);
 		}
 		free (name);
 	}
@@ -2806,6 +2810,9 @@ static int fcn_print_json(RCore *core, RAnalFunction *fcn, bool dorefs, PJ *pj) 
 	char *name = r_core_anal_fcn_name (core, fcn);
 	if (name) {
 		pj_ks (pj, "name", name);
+	}
+	if (fcn->pin) {
+		pj_ks (pj, "pin", fcn->pin);
 	}
 	pj_kn (pj, "size", r_anal_function_linear_size (fcn));
 	pj_ks (pj, "is-pure", r_str_bool (r_anal_function_purity (fcn)));
@@ -3094,6 +3101,9 @@ static int fcn_print_detail(RCore *core, RAnalFunction *fcn) {
 	RVecAnalRef_free (refs);
 	/* Saving Function stack frame */
 	r_cons_printf (cons, "'0x%"PFMT64x"'afS %d\n", fcn->addr, fcn->maxstack);
+	if (fcn->pin) {
+		r_cons_printf (cons, "'0x%"PFMT64x"'aflp %s\n", fcn->addr, fcn->pin);
+	}
 	free (name);
 	return 0;
 }

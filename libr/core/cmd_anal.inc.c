@@ -722,10 +722,22 @@ static RCoreHelpMessage help_msg_afl = {
 	"afllj", "", "list functions in verbose mode (alias to aflj)",
 	"aflm", "[?]", "list functions in makefile style (af@@=`aflm~0x`)",
 	"afln", "[?]", "list all function names",
+	"aflp", "[?-*j] [emoji]", "pin current function (set/unset/list pinned functions)",
 	"aflq", "", "list functions in quiet mode",
 	"aflqj", "", "list functions in json quiet mode",
 	"afls", "[?asn]", "sort function list by address, size or name",
 	"aflx", "[?*jv]", "list function xrefs (who references or calls the current function)",
+	NULL
+};
+
+static RCoreHelpMessage help_msg_aflp = {
+	"Usage:", "aflp", " manage function pins (emoji markers)",
+	"aflp", "", "list only pinned functions",
+	"aflp", " 📍", "pin current function with given emoji or string",
+	"aflp-", "", "unset pin of current function",
+	"aflp-", "*", "unset pins of all functions",
+	"aflp*", "", "list pinned functions as r2 commands",
+	"aflpj", "", "list pinned functions in json",
 	NULL
 };
 
@@ -5428,6 +5440,92 @@ repeat:
 	return true;
 }
 
+static void cmd_aflp(RCore *core, const char *input) {
+	// input points at char after "aflp"
+	RAnalFunction *fcn;
+	RListIter *iter;
+	switch (*input) {
+	case '?':
+		r_core_cmd_help (core, help_msg_aflp);
+		return;
+	case '-': {
+		if (input[1] == '*') {
+			int n = 0;
+			r_list_foreach (core->anal->fcns, iter, fcn) {
+				if (fcn->pin) {
+					R_FREE (fcn->pin);
+					n++;
+				}
+			}
+			R_LOG_INFO ("%d pins cleared", n);
+		} else {
+			RAnalFunction *f = r_anal_get_fcn_in (core->anal, core->addr, -1);
+			if (!f) {
+				R_LOG_ERROR ("No function at 0x%08"PFMT64x, core->addr);
+				return;
+			}
+			R_FREE (f->pin);
+		}
+		return;
+	}
+	case ' ': {
+		RAnalFunction *f = r_anal_get_fcn_in (core->anal, core->addr, -1);
+		if (!f) {
+			R_LOG_ERROR ("No function at 0x%08"PFMT64x, core->addr);
+			return;
+		}
+		const char *emoji = r_str_trim_head_ro (input + 1);
+		if (R_STR_ISEMPTY (emoji)) {
+			R_FREE (f->pin);
+		} else {
+			free (f->pin);
+			f->pin = strdup (emoji);
+		}
+		return;
+	}
+	case '*': {
+		r_list_foreach (core->anal->fcns, iter, fcn) {
+			if (fcn->pin) {
+				r_cons_printf (core->cons, "aflp %s @ 0x%08"PFMT64x"\n", fcn->pin, fcn->addr);
+			}
+		}
+		return;
+	}
+	case 'j': {
+		PJ *pj = r_core_pj_new (core);
+		pj_a (pj);
+		r_list_foreach (core->anal->fcns, iter, fcn) {
+			if (!fcn->pin) {
+				continue;
+			}
+			pj_o (pj);
+			pj_kn (pj, "addr", fcn->addr);
+			pj_ks (pj, "name", fcn->name);
+			pj_ks (pj, "pin", fcn->pin);
+			pj_end (pj);
+		}
+		pj_end (pj);
+		char *s = pj_drain (pj);
+		r_cons_println (core->cons, s);
+		free (s);
+		return;
+	}
+	case 0: {
+		r_list_foreach (core->anal->fcns, iter, fcn) {
+			if (fcn->pin) {
+				r_cons_printf (core->cons, "0x%08"PFMT64x" %4d %6"PFMT64d" %s %s\n",
+					fcn->addr, r_list_length (fcn->bbs),
+					r_anal_function_realsize (fcn), fcn->pin, fcn->name);
+			}
+		}
+		return;
+	}
+	default:
+		r_core_cmd_help (core, help_msg_aflp);
+		return;
+	}
+}
+
 static void cmd_afla(RCore *core, const char *input) {
 	RListIter *iter;
 	const bool json = *input == 'j';
@@ -6012,6 +6110,9 @@ static int cmd_af(RCore *core, const char *input) {
 			break;
 		case 'c': // "aflc"
 			r_cons_printf (core->cons, "%d\n", r_list_length (core->anal->fcns));
+			break;
+		case 'p': // "aflp"
+			cmd_aflp (core, input + 3);
 			break;
 		case ' ': // "afl [addr]" argument ignored
 		case 0: // "afl"

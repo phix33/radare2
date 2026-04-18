@@ -129,6 +129,8 @@ R_API void r_anal_function_free(RAnalFunction *fcn) {
 	ht_pp_free (fcn->label_addrs);
 
 	free (fcn->name);
+	free (fcn->realname);
+	free (fcn->pin);
 	fcn->bbs = NULL;
 	free (fcn->fingerprint);
 	r_anal_diff_free (fcn->diff);
