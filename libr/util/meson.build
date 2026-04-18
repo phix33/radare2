@@ -20,6 +20,7 @@ r_util_sources = [
   'chmod.c',
   'debruijn.c',
   'donut.c',
+  'emoji.c',
   'event.c',
   'file.c',
   'format.c',

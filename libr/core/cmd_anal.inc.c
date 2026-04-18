@@ -734,6 +734,7 @@ static RCoreHelpMessage help_msg_aflp = {
 	"Usage:", "aflp", " manage function pins (emoji markers)",
 	"aflp", "", "list only pinned functions",
 	"aflp", " 📍", "pin current function with given emoji or string",
+	"aflp", " smile", "pin using emoji short name (also accepts :smile:)",
 	"aflp-", "", "unset pin of current function",
 	"aflp-", "*", "unset pins of all functions",
 	"aflp*", "", "list pinned functions as r2 commands",
@@ -5478,8 +5479,9 @@ static void cmd_aflp(RCore *core, const char *input) {
 		if (R_STR_ISEMPTY (emoji)) {
 			R_FREE (f->pin);
 		} else {
+			const char *resolved = r_emoji_from_name (emoji);
 			free (f->pin);
-			f->pin = strdup (emoji);
+			f->pin = strdup (resolved? resolved: emoji);
 		}
 		return;
 	}
