@@ -6804,32 +6804,34 @@ static RBinJavaAnnotationsArray *r_bin_java_annotation_array_new(RBinJavaObj *bi
 	return annotation_array;
 }
 
-static RBinJavaAttrInfo *r_bin_java_rtv_annotations_attr_new(RBinJavaObj *bin, ut8 *buffer, ut64 sz, ut64 buf_offset) {
-	ut32 i = 0;
-	ut64 offset = 0;
+static RBinJavaAttrInfo *r_bin_java_annotations_attr_new(RBinJavaObj *bin, ut8 *buffer, ut64 sz, ut64 buf_offset, ut8 type) {
 	if (sz < 8) {
 		return NULL;
 	}
 	RBinJavaAttrInfo *attr = r_bin_java_default_attr_new (bin, buffer, sz, buf_offset);
-	offset += 6;
-	if (attr) {
-		attr->type = R_BIN_JAVA_ATTR_TYPE_RUNTIME_VISIBLE_ANNOTATION_ATTR;
-		attr->info.annotation_array.num_annotations = R_BIN_JAVA_USHORT (buffer, offset);
-		offset += 2;
-		attr->info.annotation_array.annotations = r_list_newf (r_bin_java_annotation_free);
-		for (i = 0; i < attr->info.annotation_array.num_annotations; i++) {
-			if (offset >= sz) {
-				break;
-			}
-			RBinJavaAnnotation *annotation = r_bin_java_annotation_new (bin, buffer + offset, sz - offset, buf_offset + offset);
-			if (annotation) {
-				offset += annotation->size;
-				r_list_append (attr->info.annotation_array.annotations, (void *)annotation);
-			}
+	ut64 offset = 6;
+	attr->type = type;
+	attr->info.annotation_array.num_annotations = R_BIN_JAVA_USHORT (buffer, offset);
+	offset += 2;
+	attr->info.annotation_array.annotations = r_list_newf (r_bin_java_annotation_free);
+	// clamp tainted count by remaining buffer (each annotation needs at least 8 bytes)
+	const ut64 nmax = (sz - offset) / 8;
+	const ut32 n = R_MIN (attr->info.annotation_array.num_annotations, nmax);
+	ut32 i;
+	for (i = 0; i < n; i++) {
+		RBinJavaAnnotation *annotation = r_bin_java_annotation_new (bin, buffer + offset, sz - offset, buf_offset + offset);
+		if (!annotation) {
+			break;
 		}
-		attr->size = offset;
+		offset += annotation->size;
+		r_list_append (attr->info.annotation_array.annotations, annotation);
 	}
+	attr->size = offset;
 	return attr;
+}
+
+static RBinJavaAttrInfo *r_bin_java_rtv_annotations_attr_new(RBinJavaObj *bin, ut8 *buffer, ut64 sz, ut64 buf_offset) {
+	return r_bin_java_annotations_attr_new (bin, buffer, sz, buf_offset, R_BIN_JAVA_ATTR_TYPE_RUNTIME_VISIBLE_ANNOTATION_ATTR);
 }
 
 static ut64 r_bin_java_annotation_array_calc_size(RBinJavaAnnotationsArray *annotation_array) {
@@ -6859,32 +6861,7 @@ static ut64 r_bin_java_rtv_annotations_attr_calc_size(RBinJavaAttrInfo *attr) {
 }
 
 static RBinJavaAttrInfo *r_bin_java_rti_annotations_attr_new(RBinJavaObj *bin, ut8 *buffer, ut64 sz, ut64 buf_offset) {
-	ut32 i = 0;
-	ut64 offset = 0;
-	if (sz < 8) {
-		return NULL;
-	}
-	RBinJavaAttrInfo *attr = r_bin_java_default_attr_new (bin, buffer, sz, buf_offset);
-	offset += 6;
-	if (attr) {
-		attr->type = R_BIN_JAVA_ATTR_TYPE_RUNTIME_INVISIBLE_ANNOTATION_ATTR;
-		attr->info.annotation_array.num_annotations = R_BIN_JAVA_USHORT (buffer, offset);
-		offset += 2;
-		attr->info.annotation_array.annotations = r_list_newf (r_bin_java_annotation_free);
-		for (i = 0; i < attr->info.annotation_array.num_annotations; i++) {
-			if (offset >= sz) {
-				break;
-			}
-			RBinJavaAnnotation *annotation = r_bin_java_annotation_new (bin, buffer + offset, sz - offset, buf_offset + offset);
-			if (!annotation) {
-				break;
-			}
-			offset += annotation->size;
-			r_list_append (attr->info.annotation_array.annotations, (void *)annotation);
-		}
-		attr->size = offset;
-	}
-	return attr;
+	return r_bin_java_annotations_attr_new (bin, buffer, sz, buf_offset, R_BIN_JAVA_ATTR_TYPE_RUNTIME_INVISIBLE_ANNOTATION_ATTR);
 }
 
 static ut64 r_bin_java_rti_annotations_attr_calc_size(RBinJavaAttrInfo *attr) {

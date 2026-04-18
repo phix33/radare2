@@ -733,8 +733,7 @@ static RCoreHelpMessage help_msg_afl = {
 static RCoreHelpMessage help_msg_aflp = {
 	"Usage:", "aflp", " manage function pins (emoji markers)",
 	"aflp", "", "list only pinned functions",
-	"aflp", " 📍", "pin current function with given emoji or string",
-	"aflp", " smile", "pin using emoji short name (also accepts :smile:)",
+	"aflp", " emoji", "pin using emoji or emoji name",
 	"aflp-", "", "unset pin of current function",
 	"aflp-", "*", "unset pins of all functions",
 	"aflp*", "", "list pinned functions as r2 commands",
@@ -5442,14 +5441,13 @@ repeat:
 }
 
 static void cmd_aflp(RCore *core, const char *input) {
-	// input points at char after "aflp"
 	RAnalFunction *fcn;
 	RListIter *iter;
 	switch (*input) {
 	case '?':
 		r_core_cmd_help (core, help_msg_aflp);
-		return;
-	case '-': {
+		break;
+	case '-':
 		if (input[1] == '*') {
 			int n = 0;
 			r_list_foreach (core->anal->fcns, iter, fcn) {
@@ -5467,9 +5465,8 @@ static void cmd_aflp(RCore *core, const char *input) {
 			}
 			R_FREE (f->pin);
 		}
-		return;
-	}
-	case ' ': {
+		break;
+	case ' ':
 		RAnalFunction *f = r_anal_get_fcn_in (core->anal, core->addr, -1);
 		if (!f) {
 			R_LOG_ERROR ("No function at 0x%08"PFMT64x, core->addr);
@@ -5483,17 +5480,15 @@ static void cmd_aflp(RCore *core, const char *input) {
 			free (f->pin);
 			f->pin = strdup (resolved? resolved: emoji);
 		}
-		return;
-	}
-	case '*': {
+		break;
+	case '*':
 		r_list_foreach (core->anal->fcns, iter, fcn) {
 			if (fcn->pin) {
 				r_cons_printf (core->cons, "aflp %s @ 0x%08"PFMT64x"\n", fcn->pin, fcn->addr);
 			}
 		}
-		return;
-	}
-	case 'j': {
+		break;
+	case 'j':
 		PJ *pj = r_core_pj_new (core);
 		pj_a (pj);
 		r_list_foreach (core->anal->fcns, iter, fcn) {
@@ -5510,9 +5505,8 @@ static void cmd_aflp(RCore *core, const char *input) {
 		char *s = pj_drain (pj);
 		r_cons_println (core->cons, s);
 		free (s);
-		return;
-	}
-	case 0: {
+		break;
+	case 0:
 		r_list_foreach (core->anal->fcns, iter, fcn) {
 			if (fcn->pin) {
 				r_cons_printf (core->cons, "0x%08"PFMT64x" %4d %6"PFMT64d" %s %s\n",
@@ -5520,11 +5514,10 @@ static void cmd_aflp(RCore *core, const char *input) {
 					r_anal_function_realsize (fcn), fcn->pin, fcn->name);
 			}
 		}
-		return;
-	}
+		break;
 	default:
-		r_core_cmd_help (core, help_msg_aflp);
-		return;
+		r_core_return_invalid_command (core, "aflp", input[0]);
+		break;
 	}
 }
 
