@@ -395,7 +395,7 @@ R_API bool r_core_visual_esil(RCore *core, const char *input) {
 			// eprintf ("step ((%s))\n", word);
 			// r_sys_usleep (500);
 			x = R_MIN (x + 1, nbits - 1);
-			r_esil_runword (esil, word);
+			r_esil_runword (esil, r_strs_from (word));
 			break;
 		case '$':
 			r_core_call (core, "ar PC=$$");

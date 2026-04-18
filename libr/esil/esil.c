@@ -7,8 +7,7 @@
 #include <r_io.h>
 #include <r_reg.h>
 
-R_IPI bool isregornum(REsil *esil, const char *str, ut64 *num);
-R_IPI bool isregornum_strs(REsil *esil, RStrs str, ut64 *num);
+R_IPI bool isregornum(REsil *esil, RStrs str, ut64 *num);
 
 R_IPI bool alignCheck(REsil *esil, ut64 addr) {
 	// r_arch_info (esil->anal->arch, R_ARCH_INFO_DATA_ALIGN);
@@ -272,17 +271,11 @@ R_API bool r_esil_set_op(REsil *esil, const char *op, REsilOpCb code, ut32 push,
 	return true;
 }
 
-R_API REsilOp *r_esil_get_op_strs(REsil *esil, RStrs w) {
+R_API REsilOp *r_esil_get_op(REsil *esil, RStrs w) {
 	R_RETURN_VAL_IF_FAIL (esil, NULL);
 	if (r_strs_empty (w) || !esil->ops) {
 		return NULL;
 	}
-	return ht_pp_find (esil->ops, &w, NULL);
-}
-
-R_API REsilOp *r_esil_get_op(REsil *esil, const char *op) {
-	R_RETURN_VAL_IF_FAIL (esil && R_STR_ISNOTEMPTY (op), NULL);
-	const RStrs w = r_strs_from (op);
 	return ht_pp_find (esil->ops, &w, NULL);
 }
 
@@ -576,7 +569,7 @@ static bool internal_esil_reg_write_no_null(REsil *esil, const char *regname, ut
 
 // Push a slice. Arena-backed slices are stored by reference; external ones
 // are copied into the arena (fixed-size, never reallocs).
-R_API bool r_esil_push_strs(REsil *esil, RStrs s) {
+R_API bool r_esil_push(REsil *esil, RStrs s) {
 	if (esil->stackptr >= esil->stacksize || s.a >= s.b) {
 		return false;
 	}
@@ -601,11 +594,6 @@ R_API bool r_esil_push_strs(REsil *esil, RStrs s) {
 	return true;
 }
 
-R_API bool r_esil_push(REsil *esil, const char *str) {
-	R_RETURN_VAL_IF_FAIL (esil && R_STR_ISNOTEMPTY (str), false);
-	return r_esil_push_strs (esil, r_strs_from (str));
-}
-
 R_API bool r_esil_pushnum(REsil *esil, ut64 num) {
 	if (esil->stackptr >= esil->stacksize
 			|| esil->stack_buf_len + 20 > esil->stack_buf_cap) {
@@ -618,7 +606,7 @@ R_API bool r_esil_pushnum(REsil *esil, ut64 num) {
 	return true;
 }
 
-R_API RStrs r_esil_pop_strs(REsil *esil) {
+R_API RStrs r_esil_pop(REsil *esil) {
 	if (esil->stackptr < 1) {
 		return (RStrs) { NULL, NULL };
 	}
@@ -635,7 +623,7 @@ static int not_a_number(REsil *esil, const char *str) {
 }
 
 // Slice-native parm classify. Hot path — open-coded on s.a[0]/s.a[1].
-R_API int r_esil_get_parm_type_strs(REsil *esil, RStrs s) {
+R_API int r_esil_get_parm_type(REsil *esil, RStrs s) {
 	const size_t n = r_strs_len (s);
 	if (n == 0) {
 		return R_ESIL_PARM_INVALID;
@@ -659,7 +647,7 @@ R_API int r_esil_get_parm_type_strs(REsil *esil, RStrs s) {
 
 // Fused classify+read — parse number first, fall to reg_read. One HT lookup
 // per reg parm (vs classify+read's two). Hot path: twice per binop.
-R_API bool r_esil_get_parm_size_strs(REsil *esil, RStrs s, ut64 *num, int *size) {
+R_API bool r_esil_get_parm_size(REsil *esil, RStrs s, ut64 *num, int *size) {
 	R_RETURN_VAL_IF_FAIL (esil && num, false);
 	if (size) {
 		*size = 0;
@@ -708,8 +696,8 @@ try_reg:
 	return false;
 }
 
-R_API bool r_esil_get_parm_strs(REsil *esil, RStrs s, ut64 *num) {
-	return r_esil_get_parm_size_strs (esil, s, num, NULL);
+R_API bool r_esil_get_parm(REsil *esil, RStrs s, ut64 *num) {
+	return r_esil_get_parm_size (esil, s, num, NULL);
 }
 
 R_API bool r_esil_reg_write(REsil *esil, const char *dst, ut64 val) {
@@ -847,7 +835,7 @@ R_API bool r_esil_dumpstack(REsil *esil) {
 	return ret;
 }
 
-static bool runword_strs(REsil *esil, RStrs w) {
+static bool runword(REsil *esil, RStrs w) {
 	esil->parse_goto_count--;
 	if (esil->parse_goto_count < 1) {
 		R_LOG_DEBUG ("ESIL infinite loop detected");
@@ -882,9 +870,9 @@ static bool runword_strs(REsil *esil, RStrs w) {
 			esil->trap_code = 1;
 			return true;
 		}
-		return r_esil_push_strs (esil, w);
+		return r_esil_push (esil, w);
 	}
-	REsilOp *op = r_esil_get_op_strs (esil, w);
+	REsilOp *op = r_esil_get_op (esil, w);
 	if (op) {
 		// op->name.a is the caller's NUL-terminated const char*.
 		const char *name = op->name.a;
@@ -916,7 +904,7 @@ static bool runword_strs(REsil *esil, RStrs w) {
 		esil->trap_code = 1;
 		return true;
 	}
-	return r_esil_push_strs (esil, w);
+	return r_esil_push (esil, w);
 }
 
 /* Return start of the nth comma-separated word within [str, eol). */
@@ -1007,7 +995,7 @@ loop:
 		const char sep = *str;
 		const RStrs tok = { start, str };
 		if (!r_strs_empty (tok)) {
-			if (!runword_strs (esil, tok)) {
+			if (!runword (esil, tok)) {
 				goto step_out;
 			}
 			switch (eval_word (esil, ostr, &str)) {
@@ -1037,9 +1025,9 @@ step_out:
 	return rc;
 }
 
-R_API bool r_esil_runword(REsil *esil, const char *word) {
-	R_RETURN_VAL_IF_FAIL (esil && word, false);
-	return runword_strs (esil, r_strs_from (word));
+R_API bool r_esil_runword(REsil *esil, RStrs word) {
+	R_RETURN_VAL_IF_FAIL (esil, false);
+	return runword (esil, word);
 }
 
 // TODO rename to clearstack() or reset_stack()
@@ -1054,10 +1042,10 @@ R_API int r_esil_condition(REsil *esil, const char *str) {
 	int ret = -1;
 	str = r_str_trim_head_ro (str);
 	(void) r_esil_parse (esil, str);
-	const RStrs popped = r_esil_pop_strs (esil);
+	const RStrs popped = r_esil_pop (esil);
 	if (!r_strs_empty (popped)) {
 		ut64 num;
-		if (isregornum_strs (esil, popped, &num)) {
+		if (isregornum (esil, popped, &num)) {
 			ret = !!num;
 		} else {
 			ret = 0;

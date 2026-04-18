@@ -5,8 +5,8 @@
 
 static bool esil2c_eq(REsil *esil) {
 	REsilC *user = esil->user;
-	const RStrs dst = r_esil_pop_strs (esil);
-	const RStrs src = r_esil_pop_strs (esil);
+	const RStrs dst = r_esil_pop (esil);
+	const RStrs src = r_esil_pop (esil);
 	if (r_strs_empty (src) || r_strs_empty (dst)) {
 		return false;
 	}
@@ -21,19 +21,19 @@ static bool esil2c_eq(REsil *esil) {
 
 static bool esil2c_peek8(REsil *esil) {
 	REsilC *user = esil->user;
-	const RStrs src = r_esil_pop_strs (esil);
+	const RStrs src = r_esil_pop (esil);
 	if (r_strs_empty (src)) {
 		return false;
 	}
 	r_strbuf_appendf (user->sb, "  tmp = mem_qword[%s];\n", src.a);
-	r_esil_push (esil, "tmp");
+	r_esil_push (esil, R_STRS_LIT ("tmp"));
 	return true;
 }
 
 static bool esil2c_poke8(REsil *esil) {
 	REsilC *user = esil->user;
-	const RStrs dst = r_esil_pop_strs (esil);
-	const RStrs src = r_esil_pop_strs (esil);
+	const RStrs dst = r_esil_pop (esil);
+	const RStrs src = r_esil_pop (esil);
 
 	if (r_strs_empty (src) || r_strs_empty (dst)) {
 		return false;
@@ -44,8 +44,8 @@ static bool esil2c_poke8(REsil *esil) {
 
 static bool esil2c_addeq(REsil *esil) {
 	REsilC *user = esil->user;
-	const RStrs dst = r_esil_pop_strs (esil);
-	const RStrs src = r_esil_pop_strs (esil);
+	const RStrs dst = r_esil_pop (esil);
+	const RStrs src = r_esil_pop (esil);
 
 	if (r_strs_empty (src) || r_strs_empty (dst)) {
 		return false;
@@ -56,8 +56,8 @@ static bool esil2c_addeq(REsil *esil) {
 
 static bool esil2c_add(REsil *esil) {
 	REsilC *user = esil->user;
-	const RStrs dst = r_esil_pop_strs (esil);
-	const RStrs src = r_esil_pop_strs (esil);
+	const RStrs dst = r_esil_pop (esil);
+	const RStrs src = r_esil_pop (esil);
 
 	if (r_strs_empty (src) || r_strs_empty (dst)) {
 		return false;
@@ -68,8 +68,8 @@ static bool esil2c_add(REsil *esil) {
 
 static bool esil2c_subeq(REsil *esil) {
 	REsilC *user = esil->user;
-	const RStrs dst = r_esil_pop_strs (esil);
-	const RStrs src = r_esil_pop_strs (esil);
+	const RStrs dst = r_esil_pop (esil);
+	const RStrs src = r_esil_pop (esil);
 
 	if (r_strs_empty (src) || r_strs_empty (dst)) {
 		return false;
@@ -80,34 +80,34 @@ static bool esil2c_subeq(REsil *esil) {
 
 static bool esil2c_xor(REsil *esil) {
 	REsilC *user = esil->user;
-	const RStrs dst = r_esil_pop_strs (esil);
-	const RStrs src = r_esil_pop_strs (esil);
+	const RStrs dst = r_esil_pop (esil);
+	const RStrs src = r_esil_pop (esil);
 
 	if (r_strs_empty (src) || r_strs_empty (dst)) {
 		return false;
 	}
 	char *var = r_str_newf ("tmp%d", esil->stackptr);
 	r_strbuf_appendf (user->sb, "  %s = %s ^ %s;\n", var, dst.a, src.a);
-	r_esil_push (esil, var);
+	r_esil_push (esil, r_strs_from (var));
 	free (var);
 	return true;
 }
 
 static bool esil2c_sub(REsil *esil) {
 	REsilC *user = esil->user;
-	const RStrs dst = r_esil_pop_strs (esil);
-	const RStrs src = r_esil_pop_strs (esil);
+	const RStrs dst = r_esil_pop (esil);
+	const RStrs src = r_esil_pop (esil);
 	const bool lgtm = (!r_strs_empty (src) && !r_strs_empty (dst));
 	if (lgtm) {
 		r_strbuf_appendf (user->sb, "  tmp = %s - %s;\n", dst.a, src.a);
-		r_esil_push (esil, "tmp");
+		r_esil_push (esil, R_STRS_LIT ("tmp"));
 	}
 	return lgtm;
 }
 
 static bool esil2c_dec(REsil *esil) {
 	REsilC *user = esil->user;
-	const RStrs src = r_esil_pop_strs (esil);
+	const RStrs src = r_esil_pop (esil);
 	if (r_strs_empty (src)) {
 		return false;
 	}
@@ -117,7 +117,7 @@ static bool esil2c_dec(REsil *esil) {
 
 static bool esil2c_inc(REsil *esil) {
 	REsilC *user = esil->user;
-	const RStrs src = r_esil_pop_strs (esil);
+	const RStrs src = r_esil_pop (esil);
 	if (r_strs_empty (src)) {
 		return false;
 	}
@@ -127,20 +127,20 @@ static bool esil2c_inc(REsil *esil) {
 
 static bool esil2c_neg(REsil *esil) {
 	REsilC *user = esil->user;
-	const RStrs src = r_esil_pop_strs (esil);
+	const RStrs src = r_esil_pop (esil);
 	if (r_strs_empty (src)) {
 		return false;
 	}
 	char *var = r_str_newf ("tmp%d", esil->stackptr);
 	r_strbuf_appendf (user->sb, "  %s = !%s;\n", var, src.a);
-	r_esil_push (esil, var);
+	r_esil_push (esil, r_strs_from (var));
 	free (var);
 	return true;
 }
 
 static bool esil2c_goto(REsil *esil) {
 	REsilC *user = esil->user;
-	const RStrs src = r_esil_pop_strs (esil);
+	const RStrs src = r_esil_pop (esil);
 	if (r_strs_empty (src)) {
 		return false;
 	}

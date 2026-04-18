@@ -80,7 +80,7 @@ static bool checkword(ParseState *ps, const char *s) {
 		} else {
 			RAnal *anal = ps->esil->anal;
 			// check if its a valid esil keyword
-			REsilOp *eop = r_esil_get_op (ps->esil, s);
+			REsilOp *eop = r_esil_get_op (ps->esil, r_strs_from (s));
 			if (eop) {
 			} else {
 				RRegItem *ri = r_reg_get (anal->reg, s, -1);

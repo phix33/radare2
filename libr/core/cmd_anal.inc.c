@@ -5466,7 +5466,7 @@ static void cmd_aflp(RCore *core, const char *input) {
 			R_FREE (f->pin);
 		}
 		break;
-	case ' ':
+	case ' ':;
 		RAnalFunction *f = r_anal_get_fcn_in (core->anal, core->addr, -1);
 		if (!f) {
 			R_LOG_ERROR ("No function at 0x%08"PFMT64x, core->addr);
@@ -5489,22 +5489,24 @@ static void cmd_aflp(RCore *core, const char *input) {
 		}
 		break;
 	case 'j':
-		PJ *pj = r_core_pj_new (core);
-		pj_a (pj);
-		r_list_foreach (core->anal->fcns, iter, fcn) {
-			if (!fcn->pin) {
-				continue;
+		{
+			PJ *pj = r_core_pj_new (core);
+			pj_a (pj);
+			r_list_foreach (core->anal->fcns, iter, fcn) {
+				if (!fcn->pin) {
+					continue;
+				}
+				pj_o (pj);
+				pj_kn (pj, "addr", fcn->addr);
+				pj_ks (pj, "name", fcn->name);
+				pj_ks (pj, "pin", fcn->pin);
+				pj_end (pj);
 			}
-			pj_o (pj);
-			pj_kn (pj, "addr", fcn->addr);
-			pj_ks (pj, "name", fcn->name);
-			pj_ks (pj, "pin", fcn->pin);
 			pj_end (pj);
+			char *s = pj_drain (pj);
+			r_cons_println (core->cons, s);
+			free (s);
 		}
-		pj_end (pj);
-		char *s = pj_drain (pj);
-		r_cons_println (core->cons, s);
-		free (s);
 		break;
 	case 0:
 		r_list_foreach (core->anal->fcns, iter, fcn) {

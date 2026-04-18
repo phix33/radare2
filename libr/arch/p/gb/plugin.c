@@ -686,9 +686,9 @@ static inline void gb_anal_cb_srl(RAnalOp *op, const ut8 data) {
 
 static bool gb_custom_daa(REsil *esil) {
 	R_RETURN_VAL_IF_FAIL (esil, false);
-	const RStrs v = r_esil_pop_strs (esil);
+	const RStrs v = r_esil_pop (esil);
 	ut64 n;
-	if (r_strs_empty (v) || !r_esil_get_parm_strs (esil, v, &n)) {
+	if (r_strs_empty (v) || !r_esil_get_parm (esil, v, &n)) {
 		return false;
 	}
 	ut8 val = (ut8)n;
@@ -1507,7 +1507,7 @@ static char* regs(RArchSession *as) {
 
 static int esil_gb_init(REsil *esil) {
 	R_RETURN_VAL_IF_FAIL (esil, false);
-	REsilOp *op = r_esil_get_op (esil, "}{");
+	REsilOp *op = r_esil_get_op (esil, R_STRS_LIT ("}{"));
 	r_esil_set_op (esil, "halt", op->code, 0, 0, R_ESIL_OP_TYPE_CUSTOM, NULL);
 	r_esil_set_op (esil, "stop", op->code, 0, 0, R_ESIL_OP_TYPE_CUSTOM, NULL);
 	r_esil_set_op (esil, "daa", gb_custom_daa, 1, 1, R_ESIL_OP_TYPE_MATH | R_ESIL_OP_TYPE_CUSTOM, NULL);

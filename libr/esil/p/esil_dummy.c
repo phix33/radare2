@@ -32,7 +32,7 @@ static void *r_esil_dummy_init(REsil *esil) {
 }
 
 static void r_esil_dummy_fini(REsil *esil, void *user) {
-	REsilOp *op = r_esil_get_op (esil, "dummy_op");
+	REsilOp *op = r_esil_get_op (esil, R_STRS_LIT ("dummy_op"));
 	if (op && op->code == esil_dummy_operation) {
 		r_esil_del_op (esil, "dummy_op");
 	}

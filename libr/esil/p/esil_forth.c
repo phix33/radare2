@@ -19,11 +19,11 @@ static bool esil_forth_syscall_handler(REsil *esil, ut32 sysc, void *user) {
 
 static bool esil_over(REsil *esil) {
 	R_RETURN_VAL_IF_FAIL (esil, false);
-	const RStrs a = r_esil_pop_strs (esil);
-	const RStrs b = r_esil_pop_strs (esil);
-	r_esil_push_strs (esil, b);
-	r_esil_push_strs (esil, a);
-	r_esil_push_strs (esil, b);
+	const RStrs a = r_esil_pop (esil);
+	const RStrs b = r_esil_pop (esil);
+	r_esil_push (esil, b);
+	r_esil_push (esil, a);
+	r_esil_push (esil, b);
 	return true;
 }
 
@@ -41,7 +41,7 @@ static void *r_esil_forth_init(REsil *esil) {
 }
 
 static void r_esil_forth_fini(REsil *esil, void *user) {
-	REsilOp *op = r_esil_get_op (esil, "OVER");
+	REsilOp *op = r_esil_get_op (esil, R_STRS_LIT ("OVER"));
 	if (op && op->code == esil_over) {
 		r_esil_del_op (esil, "OVER");
 	}

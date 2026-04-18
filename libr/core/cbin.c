@@ -3555,7 +3555,7 @@ static bool bin_sections(RCore *core, PJ *pj, int mode, ut64 laddr, int va, ut64
 					}
 					free (data);
 				} else if (core->bin->options.verbose) {
-					R_LOG_ERROR ("Section at 0x%08" PFMT64x " larger than bin.hashlimit", section->paddr);
+					R_LOG_ERROR ("Section at 0x%08" PFMT64x " larger than bin.hashlimit %d", section->paddr, plimit);
 				}
 				}
 				char disp_perms[64];
@@ -3591,7 +3591,7 @@ static bool bin_sections(RCore *core, PJ *pj, int mode, ut64 laddr, int va, ut64
 					}
 					free (data);
 				} else {
-					R_LOG_WARN ("Section at 0x%08" PFMT64x " larger than bin.hashlimit", section->paddr);
+					R_LOG_WARN ("Section at 0x%08" PFMT64x " larger than bin.hashlimit %d", section->paddr, plimit);
 				}
 			}
 			pj_kn (pj, "paddr", section->paddr);

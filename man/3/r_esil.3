@@ -46,21 +46,31 @@ feeding ESIL expressions into the engine.
 Parses and executes an ESIL expression string.
 .Pp
 .Ft bool
-.Fn r_esil_runword "REsil *esil" "const char *word"
+.Fn r_esil_runword "REsil *esil" "RStrs word"
 .Pp
-Executes a single ESIL operation word.
+Executes a single ESIL operation word given as a slice.
+Wrap a NUL-terminated C string with
+.Fn r_strs_from
+(or
+.Fn R_STRS_LIT
+for literals) to run it.
 .Sh STACK OPERATIONS
 .Pp
 Manipulate the ESIL evaluation stack directly when constructing or inspecting
 temporary values used during expression evaluation.
 .Pp
 .Ft bool
-.Fn r_esil_push "REsil *esil" "const char *str"
+.Fn r_esil_push "REsil *esil" "RStrs s"
 .Pp
-Pushes a value or expression onto the ESIL stack.
+Pushes a value or expression onto the ESIL stack as a slice.
+Wrap a NUL-terminated C string with
+.Fn r_strs_from
+(or
+.Fn R_STRS_LIT
+for literals) to push it.
 .Pp
 .Ft RStrs
-.Fn r_esil_pop_strs "REsil *esil"
+.Fn r_esil_pop "REsil *esil"
 .Pp
 Pops the top value from the ESIL stack as a slice.
 .Pp
@@ -109,9 +119,14 @@ installed to extend or override built-in ESIL semantics at runtime.
 Defines a custom ESIL operation.
 .Pp
 .Ft REsilOp *
-.Fn r_esil_get_op "REsil *esil" "const char *op"
+.Fn r_esil_get_op "REsil *esil" "RStrs w"
 .Pp
-Retrieves information about an ESIL operation.
+Retrieves information about an ESIL operation by slice.
+Wrap a NUL-terminated C string with
+.Fn r_strs_from
+(or
+.Fn R_STRS_LIT
+for literals) to look it up.
 .Sh PLUGINS
 .Pp
 Manage architecture or feature plugins which provide arch-specific ESIL
@@ -217,7 +232,7 @@ int main(void) {
     r_esil_parse (esil, "rax,8,+");
 
     // Pop the result as a slice (arena-backed, no free needed)
-    RStrs res = r_esil_pop_strs (esil);
+    RStrs res = r_esil_pop (esil);
     if (!r_strs_empty (res)) {
         printf ("esil result: %s\n", res.a);
     }
@@ -235,8 +250,8 @@ REsil *esil = r_esil_new (32, 0, 64);
 r_esil_pushnum (esil, 2);
 r_esil_pushnum (esil, 3);
 // run the '+' word directly (same as parsing "2,3,+")
-r_esil_runword (esil, "+");
-RStrs sum = r_esil_pop_strs (esil);
+r_esil_runword (esil, R_STRS_LIT ("+"));
+RStrs sum = r_esil_pop (esil);
 printf ("2 + 3 = %s\n", sum.a);
 
 // dump stack state (useful when interactively debugging expressions)

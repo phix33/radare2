@@ -252,7 +252,7 @@ static bool _round_0_cb(void *user, void *data, ut32 id) {
 	EsilCfgGen *gen = (EsilCfgGen *)user;
 	char *atom = (char *)data;
 	RAnalEsilBB *bb = (RAnalEsilBB *)gen->cur->data;
-	REsilOp *op = r_esil_get_op (gen->esil, atom);
+	REsilOp *op = r_esil_get_op (gen->esil, r_strs_from (atom));
 	bb->last.idx = (ut16)id;
 	if (op && op->type == R_ESIL_OP_TYPE_CONTROL_FLOW) {
 		_handle_control_flow_ifelsefi (gen, atom, id);
@@ -309,7 +309,7 @@ static void _handle_goto(EsilCfgGen *gen, ut32 idx) {
 	// bb->last.idx is the GOTO operation itself, we do not reach this in the loop
 	for (id = bb->first.idx; id < bb->last.idx; id++) {
 		char *atom = (char *)r_id_storage_get (gen->atoms, (ut32)id);
-		REsilOp *op = r_esil_get_op (gen->esil, atom);
+		REsilOp *op = r_esil_get_op (gen->esil, r_strs_from (atom));
 		if (op) {
 			ut32 j;
 			for (j = 0; j < op->pop; j++) {
@@ -370,7 +370,7 @@ beach:
 static bool _round_1_cb(void *user, void *data, ut32 id) {
 	EsilCfgGen *gen = (EsilCfgGen *)user;
 	char *atom = (char *)data;
-	REsilOp *op = r_esil_get_op (gen->esil, atom);
+	REsilOp *op = r_esil_get_op (gen->esil, r_strs_from (atom));
 	if (op && op->type == R_ESIL_OP_TYPE_CONTROL_FLOW) {
 		if (!strcmp ("BREAK", atom)) {
 			_handle_break (gen, id);

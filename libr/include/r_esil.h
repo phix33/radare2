@@ -320,7 +320,7 @@ R_API bool r_esil_setup(REsil *esil, struct r_anal_t *anal, bool romem, bool sta
 R_API bool r_esil_setup_ops(REsil *esil);
 R_API void r_esil_fini(REsil *esil);
 R_API void r_esil_free(REsil *esil);
-R_API bool r_esil_runword(REsil *esil, const char *word);
+R_API bool r_esil_runword(REsil *esil, RStrs word);
 R_API bool r_esil_parse(REsil *esil, const char *str);
 R_API bool r_esil_dumpstack(REsil *esil);
 // XXX must be internal imho
@@ -333,9 +333,8 @@ R_API bool r_esil_reg_read_silent(REsil *esil, const char *name, ut64 *val, ut32
 R_API bool r_esil_reg_write(REsil *esil, const char *name, ut64 val);
 R_API bool r_esil_reg_write_silent(REsil *esil, const char *dst, ut64 val);
 R_API bool r_esil_pushnum(REsil *esil, ut64 num);
-R_API bool r_esil_push(REsil *esil, const char *str);
-R_API bool r_esil_push_strs(REsil *esil, RStrs s);
-R_API RStrs r_esil_pop_strs(REsil *esil);
+R_API bool r_esil_push(REsil *esil, RStrs s);
+R_API RStrs r_esil_pop(REsil *esil);
 typedef bool (*REsilOpCb)(REsil *esil);
 
 typedef struct r_esil_operation_t {
@@ -364,17 +363,16 @@ R_API char *r_esil_toc(REsilC *esil, const char *expr);
 R_API char*r_esil_opstr(REsil*, int mode);
 
 R_API bool r_esil_set_op(REsil *esil, const char *op, REsilOpCb code, ut32 push, ut32 pop, ut32 type, const char *info);
-R_API REsilOp *r_esil_get_op(REsil *esil, const char *op);
-R_API REsilOp *r_esil_get_op_strs(REsil *esil, RStrs w);
+R_API REsilOp *r_esil_get_op(REsil *esil, RStrs w);
 R_API void r_esil_del_op(REsil *esil, const char *op);
 R_API void r_esil_stack_free(REsil *esil);
 R_API int r_esil_condition(REsil *esil, const char *str);
 
 // Slice-native parm accessors. Fast path — open-coded slice scans avoid
 // routing through NUL-term versions at -O0 where static inlines don't inline.
-R_API int r_esil_get_parm_type_strs(REsil *esil, RStrs s);
-R_API bool r_esil_get_parm_size_strs(REsil *esil, RStrs s, ut64 *num, int *size);
-R_API bool r_esil_get_parm_strs(REsil *esil, RStrs s, ut64 *num);
+R_API int r_esil_get_parm_type(REsil *esil, RStrs s);
+R_API bool r_esil_get_parm_size(REsil *esil, RStrs s, ut64 *num, int *size);
+R_API bool r_esil_get_parm(REsil *esil, RStrs s, ut64 *num);
 
 // esil_handler.c
 R_API bool r_esil_handlers_init(REsil *esil);
