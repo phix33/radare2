@@ -71,7 +71,7 @@ static inline RStrs r_strs_store_get(const RStrsStore *ss, ut32 idx) {
 			return r_strs_from_len (ss->base + e->off, e->len);
 		}
 	}
-	RStrs r = {0};
+	RStrs r = { NULL, NULL };
 	return r;
 }
 
