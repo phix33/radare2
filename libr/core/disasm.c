@@ -2218,11 +2218,13 @@ static void ds_show_functions(RDisasmState *ds) {
 	if (empty_signature (sign)) {
 		R_FREE (sign);
 	}
+	const char *pinstr = f->pin? f->pin: "";
+	const char *pinsep = f->pin? " ": "";
 	if (f->type == R_ANAL_FCN_TYPE_LOC) {
 		r_cons_printf (cons, "%s%s ", COLOR (ds, color_fline), core->cons->vline[LINE_CROSS]); // |-
 		if (!showSig) {
-			r_cons_printf (cons, "%s%s%s %"PFMT64u, COLOR (ds, color_floc),
-					fcn_name, COLOR_RESET (ds), r_anal_function_linear_size (f));
+			r_cons_printf (cons, "%s%s%s%s%s %"PFMT64u, COLOR (ds, color_floc),
+					pinstr, pinsep, fcn_name, COLOR_RESET (ds), r_anal_function_linear_size (f));
 			ds_newline (ds);
 		}
 	} else {
@@ -2252,8 +2254,8 @@ static void ds_show_functions(RDisasmState *ds) {
 			ds_print_offset (ds);
 		}
 		if (!showSig) {
-			r_cons_printf (cons, "%s(%s) %s%s%s %d", COLOR (ds, color_fname),
-					fcntype, fcn_name, cmt, COLOR_RESET (ds), tmp_get_realsize (f));
+			r_cons_printf (cons, "%s(%s) %s%s%s%s%s %d", COLOR (ds, color_fname),
+					fcntype, pinstr, pinsep, fcn_name, cmt, COLOR_RESET (ds), tmp_get_realsize (f));
 			ds_newline (ds);
 		}
 	}
@@ -2302,6 +2304,9 @@ static void ds_show_functions(RDisasmState *ds) {
 
 		char *sig = r_anal_function_format_sig (core->anal, f, fcn_name, &vars_cache, COLOR (ds, color_fname), COLOR_RESET (ds));
 		if (sig) {
+			if (f->pin) {
+				r_cons_printf (cons, "%s ", f->pin);
+			}
 			r_cons_print (cons, sig);
 			if (f->is_noreturn) {
 				r_cons_printf (cons, " // noreturn");
@@ -6849,9 +6854,10 @@ toro:
 					ds_pre_xrefs (ds, true);
 					r_cons_printf (ds->core->cons, "%s %s\n", ds->cmtoken, comment);
 				}
-				r_cons_printf (ds->core->cons, "%s%s%s (fcn) %s%s%s\n",
+				r_cons_printf (ds->core->cons, "%s%s%s (fcn) %s%s%s%s%s\n",
 					COLOR (ds, color_fline), core->cons->vline[CORNER_TL],
-					COLOR (ds, color_fname), f->name, cmt, COLOR_RESET (ds));
+					COLOR (ds, color_fname), f->pin? f->pin: "", f->pin? " ": "",
+					f->name, cmt, COLOR_RESET (ds));
 				ds_setup_print_pre (ds, true, false);
 				ds_print_lines_left (ds);
 				ds_print_offset (ds);
