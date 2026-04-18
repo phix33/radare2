@@ -183,7 +183,6 @@ R_API RVecCodeMetaItemPtr *r_codemeta_in(RCodeMeta *code, size_t start, size_t e
 	RCodeMetaItem *min = NULL;
 	r_crbtree_find (code->tree, &search_start, cmp_find_min_mid, &min);
 	if (min) {
-		const size_t end_mid = (end - 1) + ((SIZE_MAX - end - 1) / 2);
 		RRBNode *node = r_crbtree_find_node (code->tree, min, cmp_ins, NULL);
 		RRBNode *prev = r_rbnode_prev (node);
 		while (prev) {
@@ -196,17 +195,10 @@ R_API RVecCodeMetaItemPtr *r_codemeta_in(RCodeMeta *code, size_t start, size_t e
 		}
 		while (node) {
 			RCodeMetaItem *mi = (RCodeMetaItem *)node->data;
-			if (! (start >= mi->end || end < mi->start)) {
+			if (start < mi->end && mi->start < end) {
 				RVecCodeMetaItemPtr_push_back (r, &mi);
 			}
 			node = r_rbnode_next (node);
-			if (node) {
-				mi = (RCodeMetaItem *)node->data;
-				const size_t mi_mid = mi->start + (mi->end - mi->start) / 2;
-				if (end_mid < mi_mid) {
-					break;
-				}
-			}
 		}
 	}
 	return r;
