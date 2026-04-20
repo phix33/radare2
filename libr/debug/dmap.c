@@ -37,7 +37,7 @@ static void print_debug_map_line(RDebug *dbg, RDebugMap *map, ut64 addr, const c
 			: r_str_newf ("%08" PFMT64x ".%s", map->addr, r_str_rwx_i (map->perm));
 		r_name_filter (name, 0);
 		r_num_units (humansz, sizeof (humansz), map->addr_end - map->addr);
-		char perm_str[16];
+		char perm_str[64];
 		r_cons_permstr (cons, map->perm, color_enabled, perm_str, sizeof (perm_str));
 		dbg->cb_printf ("0x%016" PFMT64x " - 0x%016" PFMT64x " %6s %5s %s\n",
 			map->addr,
@@ -66,7 +66,7 @@ static void print_debug_map_line(RDebug *dbg, RDebugMap *map, ut64 addr, const c
 			free (filtered_name);
 		}
 		r_num_units (humansz, sizeof (humansz), map->size);
-		char perm_str[16];
+		char perm_str[64];
 		r_cons_permstr (cons, map->perm, color_enabled, perm_str, sizeof (perm_str));
 		dbg->cb_printf (fmtstr,
 			map->addr,

@@ -211,7 +211,6 @@ static int win_hprint(RCons *cons, DWORD hdl, const char *ptr, int len, bool vmo
 		if (esc == 1) {
 			// \x1b[2J
 			if (ptr[0] != '[') {
-				R_LOG_ERROR ("Oops invalid escape char");
 				esc = 0;
 				str = ptr + 1;
 				continue;

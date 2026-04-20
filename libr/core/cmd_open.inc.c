@@ -669,7 +669,7 @@ static void map_list(RCore *core, int mode, RPrint *p, int fd) {
 			break;
 		}
 		default: {
-			char perm_str[16];
+			char perm_str[64];
 			r_cons_permstr (core->cons, map->perm,
 				r_config_get_i (core->config, "scr.color") > 0, perm_str, sizeof (perm_str));
 			r_print_printf (p, "%c%2d fd: %i +0x%08"PFMT64x" 0x%08"PFMT64x
