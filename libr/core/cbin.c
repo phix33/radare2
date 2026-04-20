@@ -3113,6 +3113,29 @@ static char *build_hash_string(RCore *core, PJ *pj, int mode, const char *chksum
 	return ret;
 }
 
+static char *section_hashstr(RCore *core, PJ *pj, int mode, const char *hashtypes, RBinSection *section, int plimit) {
+	int datalen = section->size;
+	if (!hashtypes || datalen <= 0) {
+		return NULL;
+	}
+	if (datalen >= plimit) {
+		R_LOG_DEBUG ("Section at 0x%08" PFMT64x " larger than bin.hashlimit %d", section->paddr, plimit);
+		return NULL;
+	}
+	ut8 *data = malloc (datalen);
+	if (!data) {
+		return NULL;
+	}
+	char *hashstr = NULL;
+	if (r_io_pread_at (core->io, section->paddr, data, datalen) == datalen) {
+		hashstr = build_hash_string (core, pj, mode, hashtypes, data, datalen);
+	} else {
+		R_LOG_DEBUG ("Cannot read section at 0x%08" PFMT64x, section->paddr);
+	}
+	free (data);
+	return hashstr;
+}
+
 static char *filter_hash_string(RMuta *muta, const char *chksum) {
 	if (!chksum) {
 		return NULL;
@@ -3539,32 +3562,12 @@ static bool bin_sections(RCore *core, PJ *pj, int mode, ut64 laddr, int va, ut64
 		} else if (IS_MODE_SIMPLEST (mode)) {
 			r_cons_printf (core->cons, "%s\n", section->name);
 		} else if (IS_MODE_SIMPLE (mode)) {
-			char *hashstr = NULL;
-			if (hashtypes) {
-				int datalen = section->size;
-				if (datalen > 0 && datalen < plimit) {
-					ut8 *data = malloc (datalen);
-					if (!data) {
-						goto out;
-					}
-					int dl = r_io_pread_at (core->io, section->paddr, data, datalen);
-					if (dl == datalen) {
-						hashstr = build_hash_string (core, pj, mode, hashtypes, data, datalen);
-					} else if (core->bin->options.verbose) {
-						R_LOG_ERROR ("Cannot read section at 0x%08" PFMT64x, section->paddr);
-					}
-					free (data);
-				} else if (core->bin->options.verbose) {
-					R_LOG_ERROR ("Section at 0x%08" PFMT64x " larger than bin.hashlimit %d", section->paddr, plimit);
-				}
-				}
-				char disp_perms[64];
-				r_cons_perm (core->cons, section->perm, use_color, true, disp_perms, sizeof (disp_perms));
-				r_cons_printf (core->cons, "0x%08" PFMT64x " 0x%08" PFMT64x " %s %s%s%s\n",
-				addr, addr + section->size,
-				disp_perms,
-				r_str_get (hashstr), hashstr? " ": "",
-				section->name);
+			char *hashstr = section_hashstr (core, pj, mode, hashtypes, section, plimit);
+			char disp_perms[64];
+			r_cons_perm (core->cons, section->perm, use_color, true, disp_perms, sizeof (disp_perms));
+			r_cons_printf (core->cons, "0x%08" PFMT64x " 0x%08" PFMT64x " %s %s%s%s\n",
+				addr, addr + section->size, disp_perms,
+				r_str_get (hashstr), hashstr? " ": "", section->name);
 			free (hashstr);
 		} else if (IS_MODE_JSON (mode)) {
 			pj_o (pj);
@@ -3576,64 +3579,19 @@ static bool bin_sections(RCore *core, PJ *pj, int mode, ut64 laddr, int va, ut64
 			}
 			pj_ks (pj, "perm", perms);
 			pj_kN (pj, "flags", section->flags);
-			if (hashtypes && (int)section->size > 0) {
-				int datalen = section->size;
-				if (datalen > 0 && datalen < plimit) {
-					ut8 *data = malloc (datalen);
-					if (!data) {
-						goto out;
-					}
-					int dl = r_io_pread_at (core->io, section->paddr, data, datalen);
-					if (dl == datalen) {
-						free (build_hash_string (core, pj, mode, hashtypes, data, datalen));
-					} else if (core->bin->options.verbose) {
-						R_LOG_ERROR ("Cannot read section at 0x%08" PFMT64x, section->paddr);
-					}
-					free (data);
-				} else {
-					R_LOG_WARN ("Section at 0x%08" PFMT64x " larger than bin.hashlimit %d", section->paddr, plimit);
-				}
-			}
+			free (section_hashstr (core, pj, mode, hashtypes, section, plimit));
 			pj_kn (pj, "paddr", section->paddr);
 			pj_kn (pj, "vaddr", addr);
 			pj_end (pj);
 		} else {
-			char *hashstr = NULL, str[128];
-			if (hashtypes && section->size > 0) {
-				int datalen = section->size;
-				if (datalen > 0 && datalen < plimit) {
-					ut8 *data = calloc (datalen, 1);
-					if (!data) {
-						goto out;
-					}
-					int dl = r_io_pread_at (core->io, section->paddr, data, datalen);
-					if (dl == datalen) {
-						hashstr = build_hash_string (core, pj, mode, hashtypes, data, datalen);
-					} else if (core->bin->options.verbose) {
-						hashstr = strdup ("*error*");
-						R_LOG_WARN ("Cannot read section at 0x%08" PFMT64x, section->paddr);
-					}
-					free (data);
-				} else {
-					R_LOG_WARN ("Section at 0x%08" PFMT64x " larger than bin.hashlimit", section->paddr);
-				}
-			}
-			if (section->arch || section->bits) {
-				snprintf (str, sizeof (str), "arch=%s bits=%d ",
-					r_str_get (arch), bits);
-			} else {
-				str[0] = 0;
-			}
+			char *hashstr = section_hashstr (core, pj, mode, hashtypes, section, plimit);
 			r_strf_buffer (128);
-			const char *section_name = (core->bin->prefix)
+			const char *section_name = core->bin->prefix
 				? r_strf ("%s.%s", core->bin->prefix, section->name)
 				: section->name;
-			// seems like asm.bits is a bitmask that seems to be always 32,64
-			// const char *asmbits = r_str_sysbits (bits);
-			const char *stype = (section->type)? section->type: "";
-			if (R_STR_ISEMPTY (stype)) {
-				stype = print_segments? "MAP": "----";
-			}
+			const char *stype = R_STR_ISEMPTY (section->type)
+				? (print_segments? "MAP": "----")
+				: section->type;
 			char disp_perms[64];
 			r_cons_perm (core->cons, section->perm, use_color, true, disp_perms, sizeof (disp_perms));
 			if (hashtypes) {
