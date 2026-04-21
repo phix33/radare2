@@ -361,7 +361,7 @@ static RIOMap *coremod(Cursor *cur, R2ProjectMod *mod) {
 			return m;
 		}
 		// XXX name is a very bad heuristic for 1:1 mapping
-		if (!strcmp (name, mod_name)) {
+		if (mod_name && !strcmp (name, mod_name)) {
 			return m;
 		}
 		if (at + sizeof (R2ProjectMod) >= bsz) {
@@ -475,7 +475,8 @@ static void rprj_info_read(RBuffer *b, R2ProjectInfo *info) {
 static void prjhelp(void) {
 	R_LOG_INFO ("prj save [file]   - save current state into a project file");
 	R_LOG_INFO ("prj info [file]   - show information about the project file");
-	R_LOG_INFO ("prj load [file]   - load project file into current session");
+	R_LOG_INFO ("prj load [file]   - merge project information into the current session");
+	R_LOG_INFO ("prj open [file]   - close current session and open the project from scratch");
 	R_LOG_INFO ("prj r2 [file]     - print an r2 script for parsing purposes");
 }
 
@@ -837,6 +838,24 @@ static void prj_load(RCore *core, const char *file, int mode) {
 	r_unref (b);
 }
 
+// destructive: wipes the current session and loads the project into a clean
+// environment. use prj_load when you want to merge the project data into the
+// existing session without losing current analysis.
+static void prj_open(RCore *core, const char *file) {
+	if (!r_file_exists (file)) {
+		R_LOG_ERROR ("Cannot find project file: %s", file);
+		return;
+	}
+	if (!r_cons_yesno (core->cons, 'n',
+			"Opening a project discards the current session (files, flags, anal, config). Continue? (y/N)")) {
+		R_LOG_INFO ("Aborted");
+		return;
+	}
+	r_core_cmd0 (core, "o--");
+	r_config_set (core->config, "prj.name", "");
+	prj_load (core, file, MODE_LOAD | MODE_CMD);
+}
+
 static void prjcmd(RCore *core, const char *mod, const char *arg) {
 	if (arg) {
 		char *argstr = strdup (arg);
@@ -850,6 +869,8 @@ static void prjcmd(RCore *core, const char *mod, const char *arg) {
 				prj_save (core, arg2);
 			} else if (!strcmp (argstr, "load")) {
 				prj_load (core, arg2, MODE_LOAD | MODE_CMD);
+			} else if (!strcmp (argstr, "open")) {
+				prj_open (core, arg2);
 			} else if (!strcmp (argstr, "r2")) {
 				prj_load (core, arg2, MODE_SCRIPT);
 			} else if (!strcmp (argstr, "info")) {
