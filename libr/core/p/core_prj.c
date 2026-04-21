@@ -902,6 +902,34 @@ static bool callback(RCorePluginSession *cps, const char *input) {
 	return false;
 }
 
+static bool plugin_init(RCorePluginSession *cps) {
+	RCore *core = cps->core;
+	if (!core || !core->autocomplete) {
+		return true;
+	}
+	if (r_core_autocomplete_find (core->autocomplete, "prj", true)) {
+		return true;
+	}
+	RCoreAutocomplete *root = r_core_autocomplete_add (core->autocomplete, "prj", R_CORE_AUTOCMPLT_DFLT, true);
+	if (!root) {
+		return true;
+	}
+	const char *subs[] = { "save", "load", "open", "info", "r2", NULL };
+	int i;
+	for (i = 0; subs[i]; i++) {
+		r_core_autocomplete_add (root, subs[i], R_CORE_AUTOCMPLT_FILE, true);
+	}
+	return true;
+}
+
+static bool plugin_fini(RCorePluginSession *cps) {
+	RCore *core = cps->core;
+	if (core && core->autocomplete) {
+		r_core_autocomplete_remove (core->autocomplete, "prj");
+	}
+	return true;
+}
+
 RCorePlugin r_core_plugin_prj = {
 	.meta = {
 		.name = "prj",
@@ -909,6 +937,8 @@ RCorePlugin r_core_plugin_prj = {
 		.author = "pancake",
 		.license = "MIT",
 	},
+	.init = plugin_init,
+	.fini = plugin_fini,
 	.call = callback,
 };
 
