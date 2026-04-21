@@ -309,7 +309,7 @@ R_API char *r_file_path(const char *bin) {
 	}
 	char *path_env = r_sys_getenv ("PATH");
 #if R2__WINDOWS__
-	if (!r_str_endswith (bin, ".exe")) {
+	if (!r_str_iendswith (bin, ".exe")) {
 		extension = ".exe";
 	}
 #endif
@@ -1374,7 +1374,11 @@ R_API bool r_file_is_executable(const char *file) {
 #elif R2__WINDOWS__
 	const char *ext = r_file_extension (file);
 	if (ext) {
-		return !strcmp (ext, "exe") || !strcmp (ext, "com") || !strcmp (ext, "bat");
+		char *lext = strdup (ext);
+		r_str_case (lext, false);
+		bool res = !strcmp (ext, "exe") || !strcmp (ext, "com") || !strcmp (ext, "bat");
+		free (lext);
+		return res;
 	}
 #endif
 	return ret;

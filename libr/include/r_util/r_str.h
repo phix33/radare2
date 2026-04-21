@@ -313,6 +313,7 @@ static inline char *R_STR_NDUP(const char * R_NULLABLE x, int len) {
 	int _len = len; return (_len > 0) ? r_str_ndup (x, _len) : NULL;
 }
 R_API bool r_str_endswith(const char *str, const char *needle);
+R_API bool r_str_iendswith(const char *str, const char *needle);
 R_API bool r_str_isnumber(const char *str);
 R_API const char *r_str_last(const char *in, const char *ch);
 R_API char* r_str_highlight(char *str, const char *word, const char *color, const char *color_reset);

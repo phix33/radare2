@@ -3513,6 +3513,19 @@ R_API bool r_str_endswith(const char *str, const char *needle) {
 	return !strcmp (str + (slen - nlen), needle);
 }
 
+R_API bool r_str_iendswith(const char *str, const char *needle) {
+	R_RETURN_VAL_IF_FAIL (str && needle, false);
+	if (!*needle) {
+		return true;
+	}
+	size_t slen = strlen (str);
+	size_t nlen = strlen (needle);
+	if (!slen || !nlen || slen < nlen) {
+		return false;
+	}
+	return !r_str_casecmp (str + (slen - nlen), needle);
+}
+
 R_API char *r_str_slice(const char *str, RStringSlice s) {
 	size_t len = s.to - s.from;
 	return r_str_ndup (str + s.from, len);
