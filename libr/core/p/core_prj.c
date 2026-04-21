@@ -14,7 +14,7 @@ enum {
 	RPRJ_MODS,
 	RPRJ_STRS,
 	RPRJ_THEM,
-	RPRJ_HINTS,
+	RPRJ_HINT,
 	RPRJ_MAGIC = 0x4a525052,
 };
 
@@ -91,11 +91,12 @@ static const char *entry_type_tostring(int a) {
 	case RPRJ_MAPS: return "Maps";
 	case RPRJ_CMDS: return "Cmds";
 	case RPRJ_FLAG: return "Flags";
+	case RPRJ_CMNT: return "Comments";
 	case RPRJ_MODS: return "Mods";
 	case RPRJ_BLOB: return "Blob";
 	case RPRJ_STRS: return "Strings";
 	case RPRJ_THEM: return "Theme";
-	case RPRJ_HINTS: return "Hints";
+	case RPRJ_HINT: return "Hints";
 	}
 	return "UNKNOWN";
 }
@@ -144,7 +145,7 @@ static R2ProjectMod *find_mod(Cursor *cur, ut64 addr, ut32 *mid) {
 }
 
 static void rprj_flag_write_one(Cursor *cur, RFlagItem *fi) {
-	R2ProjectFlag flag;
+	R2ProjectFlag flag = {0};
 	ut32 name = rprj_st_append (cur->st, fi->name);
 	ut32 mid = UT32_MAX;
 	R2ProjectMod *mod = find_mod (cur, fi->addr, &mid);
@@ -156,7 +157,7 @@ static void rprj_flag_write_one(Cursor *cur, RFlagItem *fi) {
 		r_write_le32 (&flag.mod, UT32_MAX);
 		r_write_le64 (&flag.delta, fi->addr);
 	}
-	r_write_le32 (&flag.size, fi->size);
+	r_write_le64 (&flag.size, fi->size);
 	r_buf_write (cur->b, (ut8*)&flag, sizeof (flag));
 }
 
@@ -171,7 +172,7 @@ static void rprj_flag_write(Cursor *cur) {
 }
 
 static void rprj_cmnt_write_one(Cursor *cur, RIntervalNode *node, RAnalMetaItem *mi) {
-	R2ProjectComment cmnt;
+	R2ProjectComment cmnt = {0};
 	ut64 va = node->start;
 	ut32 text = rprj_st_append (cur->st, mi->str);
 	ut32 mid = UT32_MAX;
@@ -184,8 +185,8 @@ static void rprj_cmnt_write_one(Cursor *cur, RIntervalNode *node, RAnalMetaItem 
 		r_write_le32 (&cmnt.mod, UT32_MAX);
 		r_write_le64 (&cmnt.delta, va);
 	}
-	const int size = r_meta_node_size (node);
-	r_write_le32 (&cmnt.size, size);
+	const ut64 size = r_meta_node_size (node);
+	r_write_le64 (&cmnt.size, size);
 	r_buf_write (cur->b, (ut8*)&cmnt, sizeof (cmnt));
 }
 
@@ -201,7 +202,7 @@ static void rprj_cmnt_write(Cursor *cur) {
 }
 
 static void rprj_cmnt_read(RBuffer *b, R2ProjectComment *cmnt) {
-	ut8 buf[sizeof (R2ProjectFlag)];
+	ut8 buf[sizeof (R2ProjectComment)];
 	r_buf_read (b, buf, sizeof (buf));
 	cmnt->text = r_read_le32 (buf + r_offsetof (R2ProjectComment, text));
 	cmnt->mod = r_read_le32 (buf + r_offsetof (R2ProjectComment, mod));
@@ -227,7 +228,7 @@ static void rprj_hint_read(RBuffer *b, R2ProjectHint *hint) {
 }
 
 static void rprj_header_write(RBuffer *b) {
-	R2ProjectHeader hdr;
+	R2ProjectHeader hdr = {0};
 	r_write_le32 (&hdr.magic, RPRJ_MAGIC);
 	r_write_le32 (&hdr.version, 1);
 	r_buf_write (b, (ut8*)&hdr, sizeof (hdr));
@@ -295,14 +296,6 @@ static bool rprj_string_read(RBuffer *b, char **s) {
 	return true;
 }
 
-static void rprj_string_write(RBuffer *b, const char *script) {
-	ut8 buf[sizeof (ut32)];
-	size_t len = strlen (script);
-	r_write_le32 (buf, len);
-	r_buf_write (b, (const ut8*)buf, sizeof (buf));
-	r_buf_write (b, (const ut8*)script, len);
-}
-
 static ut32 checksum(RCore *core, ut64 va, size_t size) {
 	ut32 csum = 0;
 	ut8 *buf = malloc (size);
@@ -330,7 +323,7 @@ static bool rprj_mods_read(RBuffer *b, R2ProjectMod *mod) {
 }
 
 static void rprj_mods_write_one(RBuffer *b, R2ProjectMod *mod) {
-	ut8 buf[sizeof (R2ProjectMod)];
+	ut8 buf[sizeof (R2ProjectMod)] = {0};
 	ut64 at = r_buf_at (b);
 	if (at > UT32_MAX) {
 		return;
@@ -447,7 +440,7 @@ static bool rprj_hints_collect_cb(ut64 addr, const RVecAnalAddrHintRecord *recor
 		if (!kind) {
 			continue;
 		}
-		R2ProjectHint hint;
+		R2ProjectHint hint = {0};
 		ut32 mid = UT32_MAX;
 		R2ProjectMod *mod = find_mod (cur, addr, &mid);
 		r_write_le32 (&hint.kind, kind);
@@ -494,9 +487,11 @@ static void prj_save(RCore *core, const char *file) {
 	// --------
 	ut64 at;
 	if (rprj_entry_begin (b, &at, RPRJ_INFO, 1)) {
+		const char *prj_name = r_config_get (core->config, "prj.name");
+		const char *prj_user = r_config_get (core->config, "cfg.user");
 		R2ProjectInfo info = {
-			.name = rprj_st_append (&st, "test-project"),
-			.user = rprj_st_append (&st, "pancake"),
+			.name = rprj_st_append (&st, r_str_get (prj_name)),
+			.user = rprj_st_append (&st, r_str_get (prj_user)),
 			.time = r_time_now ()
 		};
 		r_buf_write (b, (const ut8*)&info, sizeof (info));
@@ -504,15 +499,6 @@ static void prj_save(RCore *core, const char *file) {
 	}
 	if (rprj_entry_begin (b, &at, RPRJ_MODS, 1)) {
 		rprj_mods_write (&cur);
-		rprj_entry_end (b, at);
-	}
-	if (rprj_entry_begin (b, &at, RPRJ_CMDS, 1)) {
-		rprj_string_write (b, "?e hello projects");
-		rprj_string_write (b, "?e goodbye");
-		rprj_entry_end (b, at);
-	}
-	if (rprj_entry_begin (b, &at, RPRJ_CMDS, 1)) {
-		rprj_string_write (b, "?E clippy");
 		rprj_entry_end (b, at);
 	}
 	if (rprj_entry_begin (b, &at, RPRJ_FLAG, 1)) {
@@ -523,35 +509,34 @@ static void prj_save(RCore *core, const char *file) {
 		rprj_cmnt_write (&cur);
 		rprj_entry_end (b, at);
 	}
-	if (rprj_entry_begin (b, &at, RPRJ_HINTS, 1)) {
+	if (rprj_entry_begin (b, &at, RPRJ_HINT, 1)) {
 		rprj_hints_write (&cur);
 		rprj_entry_end (b, at);
 	}
-	rprj_st_append (&st, "one string");
-	rprj_st_append (&st, "another one");
-#if 0
-	if (rprj_entry_begin (b, &at, RPRJ_MODS, 1)) {
-		// TODO
-		rprj_entry_end (b, at);
-	}
-#endif
 	if (rprj_entry_begin (b, &at, RPRJ_STRS, 1)) {
 		rprj_st_write (b, &st);
 		rprj_entry_end (b, at);
 	}
 	// -------------
+	bool can_write = true;
 	if (r_file_exists (file)) {
 		if (!r_cons_yesno (core->cons, 'y', "Overwrite project file (Y/n)")) {
 			R_LOG_ERROR ("File exists");
-			return;
+			can_write = false;
+		} else {
+			r_file_rm (file);
 		}
-		r_file_rm (file);
 	}
-	ut64 size;
-	const ut8 *data = r_buf_data (b, &size);
-	if (!r_file_dump (file, data, size, false)) {
-		R_LOG_ERROR ("Cannot write file");
+	if (can_write) {
+		ut64 size;
+		const ut8 *data = r_buf_data (b, &size);
+		if (!r_file_dump (file, data, size, false)) {
+			R_LOG_ERROR ("Cannot write file");
+		}
 	}
+	r_unref (b);
+	r_list_free (cur.mods);
+	free (st.data);
 }
 
 static ut8 *rprj_find(RBuffer *b, ut32 type, ut32 *size) {
@@ -593,6 +578,12 @@ static void prj_load(RCore *core, const char *file, int mode) {
 	R2ProjectHeader hdr;
 	if (!rprj_header_read (b, &hdr)) {
 		R_LOG_ERROR ("Invalid file type");
+		r_unref (b);
+		return;
+	}
+	if (hdr.version != 1) {
+		R_LOG_ERROR ("Unsupported project version %d (this build understands version 1)", hdr.version);
+		r_unref (b);
 		return;
 	}
 	if (mode & MODE_LOG) {
@@ -602,15 +593,21 @@ static void prj_load(RCore *core, const char *file, int mode) {
 		r_cons_printf (core->cons, "    version = %d\n", hdr.version);
 		r_cons_printf (core->cons, "  }\n");
 	}
-	R2ProjectStringTable st;
+	R2ProjectStringTable st = {0};
 	Cursor cur = { core, &st, b, r_list_newf (free) };
 	// load constants
 	st.data = rprj_find (b, RPRJ_STRS, &st.size);
+	if (!st.data) {
+		R_LOG_ERROR ("Missing string table (RPRJ_STRS) in project file");
+		r_list_free (cur.mods);
+		r_unref (b);
+		return;
+	}
 	r_buf_seek (b, sizeof (R2ProjectHeader), SEEK_SET);
 
-	ut32 modsize;
+	ut32 modsize = 0;
 	ut8 *modsbuf = rprj_find (b, RPRJ_MODS, &modsize);
-	RBuffer *mods = r_buf_new_with_bytes (modsbuf, modsize);
+	RBuffer *mods = modsbuf? r_buf_new_with_bytes (modsbuf, modsize): NULL;
 	if (mods) {
 		ut32 n = 0;
 		while (n < modsize) {
@@ -728,6 +725,11 @@ static void prj_load(RCore *core, const char *file, int mode) {
 					R2ProjectComment cmnt;
 					rprj_cmnt_read (b, &cmnt);
 					const char *cmnt_text = rprj_st_get (&st, cmnt.text);
+					if (!cmnt_text) {
+						R_LOG_WARN ("Invalid comment string index %u", cmnt.text);
+						at += sizeof (cmnt);
+						continue;
+					}
 					R2ProjectMod *mod = r_list_get_n (cur.mods, cmnt.mod);
 					if (mod) {
 						ut64 va = mod->vmin + cmnt.delta;
@@ -758,6 +760,11 @@ static void prj_load(RCore *core, const char *file, int mode) {
 					R2ProjectFlag flag;
 					rprj_flag_read (b, &flag);
 					const char *flag_name = rprj_st_get (&st, flag.name);
+					if (!flag_name) {
+						R_LOG_WARN ("Invalid flag string index %u", flag.name);
+						at += sizeof (flag);
+						continue;
+					}
 					R2ProjectMod *mod = r_list_get_n (cur.mods, flag.mod);
 					if (mod) {
 						ut64 va = mod->vmin + flag.delta;
@@ -767,8 +774,6 @@ static void prj_load(RCore *core, const char *file, int mode) {
 						if (mode & MODE_LOAD) {
 							r_flag_set (core->flags, flag_name, va, flag.size);
 						}
-						// r_core_cmdf (core, "'f %s=0x%08"PFMT64x, flag_name, mod->vmin + flag.delta);
-						// r_cons_printf (core->cons, "%d + %d = %s\n", (int)flag.mod, (int)flag.delta, flag_name);
 					} else {
 						eprintf ("Cant find map for %s\n", flag_name);
 					}
@@ -776,7 +781,7 @@ static void prj_load(RCore *core, const char *file, int mode) {
 				}
 			}
 			break;
-		case RPRJ_HINTS:
+		case RPRJ_HINT:
 			{
 				ut64 at = r_buf_at (b);
 				ut64 last = at + entry.size - 16;
@@ -825,6 +830,10 @@ static void prj_load(RCore *core, const char *file, int mode) {
 	if (mode & MODE_LOG) {
 		r_cons_printf (core->cons, "}\n");
 	}
+	r_unref (mods);
+	free (modsbuf);
+	r_list_free (cur.mods);
+	free (st.data);
 	r_unref (b);
 }
 
