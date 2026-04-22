@@ -29,6 +29,7 @@ typedef struct r_space_t {
 	// Used by RFlag when cfg.autoflagspace is enabled to auto-assign
 	// flags whose names start with any of these prefixes.
 	RList *prefixes; // <char*>
+	ut32 privtag; // plugin-private tag used for string index refs
 } RSpace;
 
 typedef enum {

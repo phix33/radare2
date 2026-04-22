@@ -954,6 +954,13 @@ R_API const char *r_flag_item_set_realname(RFlag *f, RFlagItem *item, const char
 	return item->realname;
 }
 
+/* add/replace/remove the rawname of a flag item */
+R_API const char *r_flag_item_set_rawname(RFlag *f, RFlagItem *item, const char * R_NULLABLE rawname) {
+	R_RETURN_VAL_IF_FAIL (item, NULL);
+	free (item->rawname);
+	return item->rawname = R_STR_ISNOTEMPTY (rawname)? strdup (rawname): NULL;
+}
+
 /* add/replace/remove the color of a flag item */
 R_API const char *r_flag_item_set_color(RFlag *f, RFlagItem *fi, const char * R_NULLABLE color) {
 	R_RETURN_VAL_IF_FAIL (f && fi, NULL);
