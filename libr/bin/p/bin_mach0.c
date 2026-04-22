@@ -152,18 +152,22 @@ static void process_constructors(RBinFile *bf, RList *ret, int bits, int limit) 
 			type  = R_BIN_ENTRY_TYPE_INIT;
 		}
 		if (type != -1) {
-			ut8 *buf = calloc (sec->size, 1);
+			if (sec->size == 0 || sec->size > ST32_MAX) {
+				continue;
+			}
+			int ss = sec->size;
+			ut8 *buf = calloc (ss, 1);
 			if (!buf) {
 				continue;
 			}
-			int read = r_buf_read_at (bf->buf, sec->paddr, buf, sec->size);
-			if (read < sec->size) {
+			ut64 nread = r_buf_read_at (bf->buf, sec->paddr, buf, ss);
+			if (nread < sec->size) {
 				R_LOG_ERROR ("process_constructors: cannot process section %s", sec->name);
 				free (buf);
 				continue;
 			}
 			if (bits == 32) {
-				for (i = 0; i + 3 < sec->size; i += 4) {
+				for (i = 0; i + 3 < ss; i += 4) {
 					if (limit_reached (ret, limit)) {
 						break;
 					}
@@ -172,7 +176,7 @@ static void process_constructors(RBinFile *bf, RList *ret, int bits, int limit) 
 					r_list_append (ret, ba);
 				}
 			} else {
-				for (i = 0; i + 7 < sec->size; i += 8) {
+				for (i = 0; i + 7 < ss; i += 8) {
 					if (limit_reached (ret, limit)) {
 						break;
 					}
@@ -655,6 +659,10 @@ static bool rebase_buffer_callback2(void *context, RFixupEventDetails * event_de
 	RBuffer *buf = obj->b;
 	const ut32 psz = event_details->ptr_size;
 	ut64 in_buf = event_details->offset - ctx->off;
+	if (psz != 4 && psz != 8) {
+		R_LOG_WARN ("rebase_buffer_callback2: invalid ptr_size %u, skipping", psz);
+		return false;
+	}
 	RList *rflist = obj->reloc_fixups;
 	if (!rflist) {
 		rflist = r_list_newf (free);
