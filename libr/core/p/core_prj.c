@@ -615,7 +615,8 @@ static void prj_save(RCore *core, const char *file) {
 	// -------------
 	bool can_write = true;
 	if (r_file_exists (file)) {
-		if (!r_cons_yesno (core->cons, 'y', "Overwrite project file (Y/n)")) {
+		const bool isint = r_config_getb (core->config, "scr.interactive");
+		if (isint && !r_cons_yesno (core->cons, 'y', "Overwrite project file (Y/n)")) {
 			R_LOG_ERROR ("File exists");
 			can_write = false;
 		} else {
@@ -1009,7 +1010,8 @@ static void prj_open(RCore *core, const char *file) {
 		R_LOG_ERROR ("Cannot find project file: %s", file);
 		return;
 	}
-	if (!r_cons_yesno (core->cons, 'n',
+	const bool isint = r_config_getb (core->config, "scr.interactive");
+	if (isint && !r_cons_yesno (core->cons, 'n',
 			"Opening a project discards the current session (files, flags, anal, config). Continue? (y/N)")) {
 		R_LOG_INFO ("Aborted");
 		return;
