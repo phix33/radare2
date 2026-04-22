@@ -150,7 +150,6 @@ R_API ut64 r_debug_add_checkpoint_branch(RDebug *dbg, ut64 parent_id, const char
 			}
 		}
 	}
-
 	RVecDebugCheckpoint_push_back (session->checkpoints, &checkpoint);
 	session->current_checkpoint_id = checkpoint.id;
 	checkpoint_warn_if_large (session);
