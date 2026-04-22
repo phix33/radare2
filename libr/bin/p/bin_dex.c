@@ -18,6 +18,7 @@
 #define DBG_SET_EPILOGUE_BEGIN    0x08
 #define DBG_SET_FILE              0x09
 #define DBG_FIRST_SPECIAL         0x0A
+#define MAX_DEX_PARAMS 32
 
 #define DBG_LINE_BASE             -4
 #define DBG_LINE_RANGE            15
@@ -265,7 +266,7 @@ static char *dex_get_proto(RBinDexObj *bin, int proto_id) {
 	}
 	const DexProto *p = &bin->protos[proto_id];
 	ut32 params_off = p->parameters_off;
-	if (params_off >= bin->size) {
+	if (!params_off || params_off >= bin->size) {
 		return NULL;
 	}
 	ut32 type_id = p->return_type_id;
@@ -276,25 +277,20 @@ static char *dex_get_proto(RBinDexObj *bin, int proto_id) {
 	if (!return_type) {
 		return NULL;
 	}
-	if (!params_off) {
-		return r_str_newf ("()%s", return_type);
-	}
 	ut8 params_buf[sizeof (ut32)];
 	if (!r_buf_read_at (bin->b, params_off, params_buf, sizeof (params_buf))) {
 		return NULL;
 	}
 	// size of the list, in 16 bit entries
 	ut32 list_size = r_read_le32 (params_buf);
-	if (list_size >= ST32_MAX) {
-		R_LOG_WARN ("function prototype contains too many parameters (> 2 million)");
-		list_size = ST32_MAX;
+	if (list_size >= MAX_DEX_PARAMS) {
+		R_LOG_WARN ("too many parameters (%d) for prototype (%d)", list_size, proto_id);
+		list_size = (MAX_DEX_PARAMS / 2);
 	}
 	size_t typeidx_bufsize = (list_size * sizeof (ut16));
 	if (params_off + typeidx_bufsize > bin->size) {
 		R_LOG_DEBUG ("truncated typeidx buffer from %d to %d",
 			(int)(params_off + typeidx_bufsize), (int)(bin->size - params_off));
-		// early return as this may result on so many trashy symbols that take too much time to load
-		// this is only happening when there's a corrupted dex.
 		return NULL;
 	}
 	RStrBuf *sig = r_strbuf_new ("(");
@@ -326,10 +322,7 @@ static char *dex_method_signature(RBinDexObj *bin, int method_idx) {
 		return NULL;
 	}
 	RBinDexMethod *method = RVecDexMethod_at (&bin->dex_methods, method_idx);
-	if (!method) {
-		return NULL;
-	}
-	return dex_get_proto (bin, method->proto_id);
+	return method? dex_get_proto (bin, method->proto_id): NULL;
 }
 
 static ut32 read32(RBuffer* b, ut64 addr) {
