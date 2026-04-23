@@ -17,6 +17,7 @@ enum {
 	RPRJ_STRS,
 	RPRJ_THEM,
 	RPRJ_HINT,
+	RPRJ_EVAL,
 	RPRJ_MAGIC = 0x4a525052,
 };
 #define RPRJ_VERSION 2
@@ -123,6 +124,7 @@ static const char *entry_type_tostring(int a) {
 	case RPRJ_STRS: return "Strings";
 	case RPRJ_THEM: return "Theme";
 	case RPRJ_HINT: return "Hints";
+	case RPRJ_EVAL: return "Evals";
 	}
 	return "UNKNOWN";
 }
@@ -552,6 +554,103 @@ static void rprj_hints_write(Cursor *cur) {
 	r_anal_addr_hints_foreach (cur->core->anal, rprj_hints_collect_cb, &ctx);
 }
 
+static bool evalkey_is_saveable(RConfigNode *node) {
+	if (r_config_node_is_ro (node)) {
+		return false;
+	}
+	if (R_STR_ISEMPTY (node->name)) {
+		return false;
+	}
+	// TODO this information nust be tied to the config vars and this function must go away soon or late
+	static const char *skip_prefixes[] = {
+		"dir.",
+		"bin.limit", //triggers binreload wtf
+		"file.",
+		"prj.",
+		"scr.",
+		"env.",
+		"stdin",
+		"pdb.",
+		"cfg.user",
+		"cfg.log.",
+		"cfg.debug",
+		"cfg.prefixdump",
+		"cmd.log",
+		"dbg.backend",
+		"dbg.btalgo",
+		"http.",
+		"key.",
+		NULL,
+	};
+	const char *n = node->name;
+	int i;
+	for (i = 0; skip_prefixes[i]; i++) {
+		if (r_str_startswith (n, skip_prefixes[i])) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static void rprj_eval_write(Cursor *cur) {
+	RBuffer *b = cur->b;
+	const ut64 count_at = r_buf_at (b);
+	write_le32 (b, 0);
+	ut32 count = 0;
+	RListIter *iter;
+	RConfigNode *node;
+	r_list_foreach (cur->core->config->nodes, iter, node) {
+		if (!evalkey_is_saveable (node)) {
+			continue;
+		}
+		const char *val = r_str_get (node->value);
+		ut32 k = rprj_st_append (cur->st, node->name);
+		ut32 v = rprj_st_append (cur->st, val);
+		if (k == UT32_MAX || v == UT32_MAX) {
+			continue;
+		}
+		write_le32 (b, k);
+		write_le32 (b, v);
+		count++;
+	}
+	ut8 buf[4];
+	r_write_le32 (buf, count);
+	r_buf_write_at (b, count_at, buf, sizeof (buf));
+}
+
+static void rprj_eval_load(Cursor *cur, int mode) {
+	RBuffer *b = cur->b;
+	RCore *core = cur->core;
+	R2ProjectStringTable *st = cur->st;
+	ut32 count = 0;
+	if (!read_le32 (b, &count)) {
+		return;
+	}
+	ut32 i;
+	for (i = 0; i < count; i++) {
+		ut32 k, v;
+		if (!read_le32 (b, &k) || !read_le32 (b, &v)) {
+			R_LOG_WARN ("Truncated eval record %u/%u", i, count);
+			break;
+		}
+		const char *name = rprj_st_get (st, k);
+		const char *value = rprj_st_get (st, v);
+		if (!name || !value) {
+			R_LOG_WARN ("Invalid eval string index (%u,%u)", k, v);
+			continue;
+		}
+		if (mode & MODE_LOG) {
+			r_cons_printf (core->cons, "      %s = %s\n", name, value);
+		}
+		if (mode & MODE_SCRIPT) {
+			r_cons_printf (core->cons, "'e %s=%s\n", name, value);
+		}
+		if (mode & MODE_LOAD) {
+			r_config_set (core->config, name, value);
+		}
+	}
+}
+
 static void rprj_info_read(RBuffer *b, R2ProjectInfo *info) {
 	ut8 buf[sizeof (R2ProjectInfo)];
 	r_buf_read (b, buf, sizeof (buf));
@@ -608,6 +707,10 @@ static void prj_save(RCore *core, const char *file) {
 		rprj_hints_write (&cur);
 		rprj_entry_end (b, at);
 	}
+	if (rprj_entry_begin (b, &at, RPRJ_EVAL, 1)) {
+		rprj_eval_write (&cur);
+		rprj_entry_end (b, at);
+	}
 	if (rprj_entry_begin (b, &at, RPRJ_STRS, 1)) {
 		rprj_st_write (b, &st);
 		rprj_entry_end (b, at);
@@ -651,10 +754,11 @@ static ut8 *rprj_find(RBuffer *b, ut32 type, ut32 *size) {
 			break;
 		}
 		if (entry.type == type) {
-			ut8 *buf = malloc (entry.size);
+			const ut32 data_size = entry.size - sizeof (R2ProjectEntry);
+			ut8 *buf = malloc (data_size);
 			if (buf) {
-				*size = entry.size;
-				r_buf_read_at (b, at + sizeof (R2ProjectEntry), buf, entry.size);
+				*size = data_size;
+				r_buf_read_at (b, at + sizeof (R2ProjectEntry), buf, data_size);
 				return buf;
 			}
 			return NULL;
@@ -815,7 +919,7 @@ static void prj_load(RCore *core, const char *file, int mode) {
 				R_LOG_ERROR ("Cannot read mod");
 				break;
 			}
-			R_LOG_INFO ("MOD: %s + 0x%08"PFMT64x, rprj_st_get (&st, mod.name), mod.vmin);
+			R_LOG_DEBUG ("MOD: %s + 0x%08"PFMT64x, rprj_st_get (&st, mod.name), mod.vmin);
 			r_list_append (cur.mods, r_mem_dup (&mod, sizeof (mod)));
 			n += sizeof (mod);
 		}
@@ -953,6 +1057,9 @@ static void prj_load(RCore *core, const char *file, int mode) {
 			break;
 		case RPRJ_FLAG:
 			rprj_flag_load (&cur, mode);
+			break;
+		case RPRJ_EVAL:
+			rprj_eval_load (&cur, mode);
 			break;
 		case RPRJ_HINT:
 			{
