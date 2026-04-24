@@ -25,3 +25,8 @@ OBJS+=$(QJS_OBJS)
 include ../../shlr/qjs/deps.mk
 endif
 include ../rules.mk
+
+ifeq ($(WANT_QJS),1)
+$(QJS_OBJS): CFLAGS+=$(QJS_CFLAGS)
+$(QJS_OBJS): ../../shlr/qjs/deps.mk
+endif

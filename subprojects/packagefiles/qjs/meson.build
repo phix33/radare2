@@ -15,6 +15,9 @@ visibility_flags = [
   '-fvisibility=hidden',
   '-Dutf8_encode=utf8_encode_r2'
 ]
+if host_machine.system() == 'android'
+  visibility_flags += ['-Dinline=', '-Wno-unused-function']
+endif
 
 qjs_static = static_library(
   'qjs', sources,
@@ -22,5 +25,4 @@ qjs_static = static_library(
   c_args: visibility_flags + qjs_c_args,
   include_directories: incs
 )
-
 

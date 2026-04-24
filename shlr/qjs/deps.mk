@@ -2,6 +2,12 @@ include ../../libr/config.mk
 # include $(SHLR)/qjs/config.mk
 LINK_QJS_ARCHIVE=0
 QJS_LIBC=0
+QJS_CFLAGS+=-Dutf8_encode=utf8_encode_r2
+
+ifeq ($(OSTYPE),android)
+# Android's clang/lld can leave references to QuickJS cutils static inlines.
+QJS_CFLAGS+=-Dinline= -Wno-unused-function
+endif
 
 ifeq ($(LINK_QJS_ARCHIVE),1)
 QJSFILES=$(QJS_NAME)/libquickjs.a
