@@ -32,6 +32,9 @@ endif
 ifeq ($(USE_LTO),1)
 LDFLAGS+=-flto
 endif
+ifeq (${OSTYPE},android)
+LDFLAGS+=-Wl,--allow-shlib-undefined
+endif
 
 ifeq (${COMPILER},wasi)
 ifeq ($(USE_LIB_ZIP),1)
