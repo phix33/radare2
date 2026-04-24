@@ -477,6 +477,42 @@ static void r2pm_check_pull_age(void) {
 	}
 }
 
+// Export the library path env var so child r2pm processes find r2 libs.
+// On Android (Termux) the OS manages library resolution natively, and
+// overriding LD_LIBRARY_PATH breaks child processes, so we skip it there.
+static void r2pm_set_ldpath(const char *r2pm_libdir) {
+#if defined(__ANDROID__)
+	(void)r2pm_libdir;
+#else
+#if R2__WINDOWS__
+	const char *ldpathvar = NULL;
+#elif __HAIKU__
+	const char *ldpathvar = "LIBRARY_PATH";
+#elif __APPLE__
+	const char *ldpathvar = "DYLD_LIBRARY_PATH";
+#else
+	const char *ldpathvar = "LD_LIBRARY_PATH";
+#endif
+	r_sys_setenv_sep (ldpathvar, r2pm_libdir, false);
+	r_sys_setenv_sep (ldpathvar, R2_LIBDIR, false);
+#endif
+}
+
+static void r2pm_set_cflags(void) {
+	char *r2_cflags = NULL;
+	char *r2_ldflags = NULL;
+	if (r_main_r2_build_flags (&r2_cflags, &r2_ldflags)) {
+		if (r2_cflags) {
+			r_sys_setenv ("R2_CFLAGS", r2_cflags);
+		}
+		if (r2_ldflags) {
+			r_sys_setenv ("R2_LDFLAGS", r2_ldflags);
+		}
+	}
+	free (r2_cflags);
+	free (r2_ldflags);
+}
+
 // set python virtual environment when available
 static void r2pm_set_pyvenv(R2Pm *r2pm) {
 	char *r2_prefix = r_xdg_datadir ("prefix");
@@ -588,34 +624,8 @@ static void r2pm_setenv(R2Pm *r2pm) {
 
 	char *r2pm_libdir = r_str_newf ("%s/lib", r2_prefix);
 	r_sys_setenv ("R2PM_LIBDIR", r2pm_libdir);
-#if R2__WINDOWS__
-	const char *ldpathvar = NULL;
-#elif __HAIKU__
-	const char *ldpathvar = "LIBRARY_PATH";
-#elif __APPLE__
-	const char *ldpathvar = "DYLD_LIBRARY_PATH";
-#else
-	const char *ldpathvar = "LD_LIBRARY_PATH";
-#endif
-// Termux natively manages its library resolution, overriding LD_LIBRARY_PATH breaks child processes.
-#if !defined(__ANDROID__)
-	r_sys_setenv_sep (ldpathvar, r2pm_libdir, false);
-	r_sys_setenv_sep (ldpathvar, R2_LIBDIR, false);
-#endif
-	{
-		char *r2_cflags = NULL;
-		char *r2_ldflags = NULL;
-		if (r_main_r2_build_flags (&r2_cflags, &r2_ldflags)) {
-			if (r2_cflags) {
-				r_sys_setenv ("R2_CFLAGS", r2_cflags);
-			}
-			if (r2_ldflags) {
-				r_sys_setenv ("R2_LDFLAGS", r2_ldflags);
-			}
-		}
-		free (r2_cflags);
-		free (r2_ldflags);
-	}
+	r2pm_set_ldpath (r2pm_libdir);
+	r2pm_set_cflags ();
 	free (r2pm_libdir);
 
 	char *incdir = r_str_newf ("%s/include", r2_prefix);
