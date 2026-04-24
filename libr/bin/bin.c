@@ -3,6 +3,7 @@
 #define R_LOG_ORIGIN "bin"
 
 #include <r_bin.h>
+#include <r_fs.h>
 #include <r_muta.h>
 #include <config.h>
 #include "i/private.h"
@@ -301,6 +302,86 @@ R_API bool r_bin_reload(RBin *bin, ut32 bf_id, ut64 baseaddr) {
 	return res;
 }
 
+static ut64 xtrdata_size(RList *xtr_data) {
+	ut64 size = 0;
+	RBinXtrData *x;
+	RListIter *it;
+	r_list_foreach (xtr_data, it, x) {
+		if (x && x->offset <= UT64_MAX - x->size) {
+			size = R_MAX (size, x->offset + x->size);
+		}
+	}
+	return size;
+}
+
+R_API bool r_bin_open_bins(RBin *bin, const char *filename, RBinFileOptions *opt, RList *xtr_data) {
+	R_RETURN_VAL_IF_FAIL (bin && opt && xtr_data, false);
+	if (r_list_empty (xtr_data)) {
+		r_list_free (xtr_data);
+		return false;
+	}
+	if (opt->loadaddr == UT64_MAX) {
+		opt->loadaddr = 0;
+	}
+	RBinFile *bf = r_bin_file_find_by_name (bin, filename);
+	if (!bf) {
+		ut64 file_sz = opt->sz? opt->sz: xtrdata_size (xtr_data);
+		bf = r_bin_file_new (bin, filename, file_sz, opt, bin->sdb, false);
+		if (!bf) {
+			r_list_free (xtr_data);
+			return false;
+		}
+		r_list_append (bin->binfiles, bf);
+		if (!bin->cur) {
+			bin->cur = bf;
+		}
+	}
+	r_list_free (bf->xtr_data);
+	bf->xtr_data = xtr_data;
+	RBinXtrData *x;
+	RListIter *it;
+	r_list_foreach (xtr_data, it, x) {
+		x->baddr = opt->baseaddr? opt->baseaddr: UT64_MAX;
+		x->laddr = opt->loadaddr? opt->loadaddr: UT64_MAX;
+	}
+	bf->loadaddr = opt->loadaddr;
+	// Do NOT eagerly load a slice: downstream r_core_bin_set_arch_bits
+	// consults asm.arch/asm.bits via r_bin_file_find_by_arch_bits and loads
+	// the right slice. Eager-loading here breaks `-a x86 -b 32` selection.
+	r_id_storage_set (bin->ids, bin->cur, bf->id);
+	r_bin_file_set_cur_binfile (bin, bf);
+	bin->cur = bf;
+	return true;
+}
+
+// Convert an r_fs bin-enumeration list (RFSFile) to RBinXtrData list.
+// Takes ownership of `bins` and frees it.
+static RList *xtrdata_from_fsbins(RList *bins) {
+	if (!bins || r_list_empty (bins)) {
+		r_list_free (bins);
+		return NULL;
+	}
+	int narch = r_list_length (bins);
+	RList *xd = r_list_newf (r_bin_xtrdata_free);
+	RFSFile *f;
+	RListIter *it;
+	r_list_foreach (bins, it, f) {
+		if (!f->buf) {
+			continue;
+		}
+		RBinXtrMetadata *m = R_NEW0 (RBinXtrMetadata);
+		m->arch = f->arch? strdup (f->arch): NULL;
+		m->bits = f->bits;
+		m->machine = f->machine? strdup (f->machine): NULL;
+		m->type = f->btype? strdup (f->btype): NULL;
+		m->xtr_type = f->container;
+		RBinXtrData *d = r_bin_xtrdata_new (f->buf, f->off, f->size, narch, m);
+		r_list_append (xd, d);
+	}
+	r_list_free (bins);
+	return xd;
+}
+
 R_API bool r_bin_open_buf(RBin *bin, RBuffer *buf, RBinFileOptions *opt) {
 	R_RETURN_VAL_IF_FAIL (bin && opt, false);
 
@@ -312,6 +393,28 @@ R_API bool r_bin_open_buf(RBin *bin, RBuffer *buf, RBinFileOptions *opt) {
 	bin->file = opt->filename;
 	if (opt->loadaddr == UT64_MAX) {
 		opt->loadaddr = 0;
+	}
+	if (!opt->sz) {
+		opt->sz = r_buf_size (buf);
+	}
+
+	// r_fs container probe: use the first fs plugin that reports loadable bins.
+	if (bin->fs && bin->options.use_xtr && !opt->pluginname) {
+		RList *fsbins = r_fs_dir_bins (bin->fs, buf);
+		if (fsbins) {
+			// Auto-mount the container so `md`, `mc`, etc. reveal the slices.
+			// Mount before xtrdata_from_fsbins consumes the list, while IO
+			// still maps the whole file so fs_fatmacho_mount can grab the fd.
+			RFSFile *first = r_list_first (fsbins);
+			if (first && first->container) {
+				r_fs_mount (bin->fs, first->container, "/bin", 0);
+			}
+			RList *xd = xtrdata_from_fsbins (fsbins);
+			if (xd) {
+				const char *fname = opt->filename? opt->filename: (bin->file? bin->file: "?");
+				return r_bin_open_bins (bin, fname, opt, xd);
+			}
+		}
 	}
 
 	RBinFile *bf = NULL;
@@ -997,7 +1100,7 @@ static void list_xtr_archs(RBin *bin, PJ *pj, int mode) {
 					pj_ki (pj, "bits", bits);
 					pj_kN (pj, "offset", xtr_data->offset);
 					pj_kN (pj, "size", xtr_data->size);
-					pj_ks (pj, "machine", machine);
+					pj_ks (pj, "machine", machine? machine: "");
 					pj_end (pj);
 					break;
 				}
@@ -1009,7 +1112,7 @@ static void list_xtr_archs(RBin *bin, PJ *pj, int mode) {
 					xtr_data->size,
 					arch,
 					bits,
-					machine);
+					machine? machine: "");
 				break;
 			}
 		}
@@ -1044,8 +1147,8 @@ R_API void r_bin_list_archs(RBin *bin, PJ *pj, RTable *t, int mode) {
 	int narch = binfile? binfile->narch: 0;
 
 	// r_bin_select (bin, "arm", 64, "arm");
-	// are we with xtr format?
-	if (binfile && binfile->curxtr) {
+	// xtr format, or native multi-slice (fat Mach-O) with xtr_data list
+	if (binfile && (binfile->curxtr || !r_list_empty (binfile->xtr_data))) {
 		list_xtr_archs (bin, pj, mode);
 		return;
 	}

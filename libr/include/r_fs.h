@@ -47,6 +47,14 @@ typedef struct r_fs_file_t {
 	struct r_fs_plugin_t *p;
 	struct r_fs_root_t *root;
 	void *ptr; // internal pointer
+	// Populated only when the file is a loadable bin inside a container.
+	// r_fs_file_free takes ownership and frees all of these.
+	RBuffer *buf;      // zero-copy slice of the container, or decompressed bytes
+	char *arch;        // "arm", "x86", ...; NULL when unknown
+	int bits;
+	char *machine;     // cpu subtype / abi string
+	char *btype;       // bin type (exec, dyn, ...)
+	const char *container; // name of the producing fs plugin; do not free
 } RFSFile;
 
 typedef struct r_fs_root_t {
@@ -54,6 +62,10 @@ typedef struct r_fs_root_t {
 	ut64 delta;
 	struct r_fs_plugin_t *p;
 	void *ptr;
+	// Backing IO fd for container filesystems (fatmacho, etc). -1 when not
+	// applicable. Closing this fd while the mount is active breaks slice
+	// reads, so o- refuses to close fds held by a mount.
+	int fd;
 	// TODO: deprecate
 	RIOBind iob;
 	RCoreBind cob;
@@ -77,6 +89,11 @@ typedef struct r_fs_plugin_t {
 	bool (*cmd)(RFS *fs, const char *cmd);
 	/* callback to print filesystem-specific details */
 	void (*details)(RFSRoot *root, RStrBuf *sb);
+	/* optional: enumerate loadable bins inside a container buffer. Returns
+	 * NULL when the plugin is not a bin container or the buffer doesn't
+	 * match. Each entry must have ->buf populated (zero-copy slice or
+	 * fresh buffer) plus arch/bits/machine/btype when known. */
+	RList/*<RFSFile>*/ *(*bins)(RBuffer *buf);
 } RFSPlugin;
 
 typedef struct r_fs_partition_t {
@@ -160,6 +177,7 @@ R_API void r_fs_del(RFS *fs, RFSPlugin *p);
 
 R_API RFSRoot *r_fs_mount(RFS* fs, const char *fstype, const char *path, ut64 delta);
 R_API bool r_fs_umount(RFS* fs, const char *path);
+R_API RFSRoot *r_fs_root_by_fd(RFS *fs, int fd);
 
 R_API RFSFile *r_fs_open(RFS* fs, const char *path, bool create);
 R_API void r_fs_close(RFS* fs, RFSFile *file);
@@ -169,6 +187,9 @@ R_API RFSFile *r_fs_slurp(RFS* fs, const char *path);
 R_API RList *r_fs_dir(RFS* fs, const char *path);
 R_API bool r_fs_dir_dump(RFS* fs, const char *path, const char *name);
 R_API bool r_fs_mkdir(RFS *fs, const char *path);
+
+/* Probe `buf` against container-capable fs plugins and return RFSFile entries from the first match. */
+R_API RList/*<RFSFile>*/ *r_fs_dir_bins(RFS *fs, RBuffer *buf);
 
 R_API RList *r_fs_find_name(RFS* fs, const char *name, const char *glob);
 R_API RList *r_fs_find_off(RFS* fs, const char *name, ut64 off);
@@ -228,6 +249,7 @@ extern RFSPlugin r_fs_plugin_xfs;
 extern RFSPlugin r_fs_plugin_zip;
 extern RFSPlugin r_fs_plugin_apfs;
 extern RFSPlugin r_fs_plugin_ubifs;
+extern RFSPlugin r_fs_plugin_fatmacho;
 #endif
 
 #ifdef __cplusplus

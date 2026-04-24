@@ -501,7 +501,6 @@ typedef struct r_bin_file_t {
 	} dwarf_metadata;
 	struct r_bin_t *rbin;
 	int string_count;
-	RBinFileOptions *options;
 	RArena *arena;
 } RBinFile;
 
@@ -566,6 +565,7 @@ struct r_bin_t {
 	RStrConstPool constpool;
 	RBinOptions options;
 	RLibStore *libstore;
+	struct r_fs_t *fs; // optional: r_bin_open_buf probes containers via r_fs
 };
 
 typedef struct r_bin_xtr_metadata_t {
@@ -856,6 +856,9 @@ R_API void r_bin_free(RBin *bin);
 R_API bool r_bin_open(RBin *bin, const char *file, RBinFileOptions *opt);
 R_API bool r_bin_open_io(RBin *bin, RBinFileOptions *opt);
 R_API bool r_bin_open_buf(RBin *bin, RBuffer *buf, RBinFileOptions *opt);
+/* Open a multi-bin container where slice enumeration was done upstream
+ * (e.g. by r_fs_dir_bins). `xtr_data` is taken ownership of. */
+R_API bool r_bin_open_bins(RBin *bin, const char *filename, RBinFileOptions *opt, RList *xtr_data);
 R_API bool r_bin_reload(RBin *bin, ut32 bf_id, ut64 baseaddr);
 R_API bool r_bin_cmd(RBin *bin, const char *input);
 
@@ -1118,7 +1121,6 @@ extern RBinPlugin r_bin_plugin_z64;
 extern RBinPlugin r_bin_plugin_zimg;
 extern RBinPlugin r_bin_plugin_gns1;
 extern RBinXtrPlugin r_bin_xtr_plugin_xtr_dyldcache;
-extern RBinXtrPlugin r_bin_xtr_plugin_xtr_fatmach0;
 extern RBinXtrPlugin r_bin_xtr_plugin_xtr_pemixed;
 extern RBinXtrPlugin r_bin_xtr_plugin_xtr_sep64;
 extern RBinXtrPlugin r_bin_xtr_plugin_xtr_xalz;

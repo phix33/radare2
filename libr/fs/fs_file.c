@@ -29,6 +29,10 @@ R_API void r_fs_file_free(RFSFile* file) {
 		free (file->path);
 		free (file->name);
 		free (file->data);
+		r_unref (file->buf);
+		free (file->arch);
+		free (file->machine);
+		free (file->btype);
 		free (file);
 	}
 }
@@ -60,6 +64,7 @@ R_API RFSRoot* r_fs_root_new(const char* path, ut64 delta) {
 		*p = 0;        // chop tailing slash
 	}
 	root->delta = delta;
+	root->fd = -1;
 	return root;
 }
 

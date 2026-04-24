@@ -1,4 +1,4 @@
-/* radare2 - LGPL - Copyright 2011-2024 - pancake */
+/* radare2 - LGPL - Copyright 2011-2026 - pancake */
 
 #define R_LOG_ORIGIN "fs"
 
@@ -208,7 +208,7 @@ R_API RFSRoot *r_fs_mount(RFS *fs, const char *R_NULLABLE fstype, const char *pa
 		return NULL;
 	}
 	r_list_append (fs->roots, root);
-	R_LOG_INFO ("Mounted %s on %s at 0x%" PFMT64x, fstype, str, delta);
+	R_LOG_DEBUG ("Mounted %s on %s at 0x%" PFMT64x, fstype, str, delta);
 	free (str);
 	free (heapFsType);
 	return root;
@@ -216,6 +216,21 @@ R_API RFSRoot *r_fs_mount(RFS *fs, const char *R_NULLABLE fstype, const char *pa
 
 static inline bool r_fs_match(const char *root, const char *path, int len) {
 	return (!strncmp (path, root, len));
+}
+
+R_API RFSRoot *r_fs_root_by_fd(RFS *fs, int fd) {
+	R_RETURN_VAL_IF_FAIL (fs, NULL);
+	if (fd < 0) {
+		return NULL;
+	}
+	RListIter *iter;
+	RFSRoot *root;
+	r_list_foreach (fs->roots, iter, root) {
+		if (root->fd == fd) {
+			return root;
+		}
+	}
+	return NULL;
 }
 
 R_API bool r_fs_umount(RFS *fs, const char *path) {
@@ -331,6 +346,32 @@ R_API int r_fs_read(RFS *fs, RFSFile *file, ut64 addr, int len) {
 	}
 	R_LOG_ERROR ("null file->p->read");
 	return -1;
+}
+
+R_API RList *r_fs_dir_bins(RFS *fs, RBuffer *buf) {
+	R_RETURN_VAL_IF_FAIL (fs && buf, NULL);
+	RFSPlugin *p;
+	RListIter *iter;
+	r_list_foreach (fs->libstore->plugins, iter, p) {
+		if (!p->bins) {
+			continue;
+		}
+		RList *res = p->bins (buf);
+		if (!res) {
+			continue;
+		}
+		if (r_list_empty (res)) {
+			r_list_free (res);
+			continue;
+		}
+		RFSFile *f;
+		RListIter *it;
+		r_list_foreach (res, it, f) {
+			f->container = p->meta.name;
+		}
+		return res;
+	}
+	return NULL;
 }
 
 R_API RList *r_fs_dir(RFS *fs, const char *p) {

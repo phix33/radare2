@@ -354,6 +354,7 @@ static bool r_fs_shell_command(RFSShell *shell, RFS *fs, const char *buf) {
 		free (abspath);
 		free (data);
 	} else if (r_str_startswith (buf, "o ") || r_str_startswith (buf, "open ") || r_str_startswith (buf, "r2 ")) {
+		bool exit_shell = r_str_startswith (buf, "r2 ");
 		char *data = strdup (buf);
 		const char *input = r_str_nextword (data, ' ');
 		input = (char *)r_str_trim_head_ro (input);
@@ -361,16 +362,34 @@ static bool r_fs_shell_command(RFSShell *shell, RFS *fs, const char *buf) {
 		if (abspath) {
 			file = r_fs_open (fs, abspath, false);
 			if (file) {
-				r_fs_read (fs, file, 0, file->size);
+				int nread = r_fs_read (fs, file, 0, file->size);
+				if (nread <= 0 || !file->data) {
+					R_LOG_ERROR ("Cannot read file (backing fd closed?)");
+					r_fs_close (fs, file);
+					r_fs_file_free (file);
+					free (abspath);
+					free (data);
+					return true;
+				}
 				char *uri = r_str_newf ("malloc://%d", file->size);
 				RIODesc *fd = fs->iob.open_at (fs->iob.io, uri, R_PERM_RW, 0, 0);
 				free (uri);
 				if (fd) {
 					fs->iob.fd_write (fs->iob.io, fd->fd, file->data, file->size);
+					if (fs->cob.cmdf) {
+						// oba 0 loads bin info; obo raises the new binfile
+						// so config (arch/bits/baddr) and seek land on it
+						// instead of the previously active slice.
+						fs->cob.cmdf (fs->cob.core, "oba 0;obo %d", fd->fd);
+					}
+					r_fs_close (fs, file);
+					r_fs_file_free (file);
 					free (abspath);
 					free (data);
-					return true;
+					return !exit_shell;
 				}
+				r_fs_close (fs, file);
+				r_fs_file_free (file);
 			} else {
 				R_LOG_ERROR ("Cannot open file");
 			}
