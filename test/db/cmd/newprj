@@ -185,3 +185,82 @@ EXPECT=<<EOF
 0
 EOF
 RUN
+
+NAME=newprj xrefs round-trip
+FILE=malloc://0x1000
+CMDS=<<EOF
+mkdir .tmp
+rm -f .tmp/newprj-xrefs.prj
+axd 0x200 0x100
+axC 0x300 0x120
+prj save .tmp/newprj-xrefs.prj > /dev/null
+ax-*
+prj load .tmp/newprj-xrefs.prj > /dev/null
+axq
+rm .tmp/newprj-xrefs.prj
+EOF
+EXPECT=<<EOF
+0x00000100 -> 0x00000200  DATA:r--
+0x00000120 -> 0x00000300  CALL:--x
+EOF
+RUN
+
+NAME=newprj rebase flags comments and xrefs
+FILE=malloc://0x100
+CMDS=<<EOF
+mkdir .tmp
+rm -f .tmp/newprj-rebase.prj
+f src.flag=0x10
+CC src comment @ 0x10
+axd 0x20 0x10
+prj save .tmp/newprj-rebase.prj > /dev/null
+f-*
+CC-*
+ax-*
+o--
+o malloc://0x100 0x1000
+prj load .tmp/newprj-rebase.prj > /dev/null
+fd 0x1010
+CC. @ 0x1010
+axq
+rm .tmp/newprj-rebase.prj
+EOF
+EXPECT=<<EOF
+src.flag
+src comment
+0x00001010 -> 0x00001020  DATA:r--
+EOF
+RUN
+
+NAME=newprj rebase multiple file-backed modules
+FILE=malloc://0x10
+CMDS=<<EOF
+mkdir .tmp
+rm -f .tmp/newprj-files.prj
+!printf AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA > .tmp/newprj-a.bin
+!printf BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB > .tmp/newprj-b.bin
+o .tmp/newprj-a.bin 0x1000
+o .tmp/newprj-b.bin 0x4000
+f first=0x1010
+f second=0x4010
+axd 0x4010 0x1010
+prj save .tmp/newprj-files.prj > /dev/null
+f-*
+ax-*
+o--
+o .tmp/newprj-a.bin 0x8000
+o .tmp/newprj-b.bin 0xc000
+prj load .tmp/newprj-files.prj > /dev/null
+fd 0x8010
+fd 0xc010
+axq
+rm .tmp/newprj-files.prj
+rm .tmp/newprj-a.bin
+rm .tmp/newprj-b.bin
+EOF
+EXPECT=<<EOF
+first
+second
+0x00008010 -> 0x0000c010  DATA:r--
+EOF
+RUN

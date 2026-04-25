@@ -18,6 +18,7 @@ enum {
 	RPRJ_THEM,
 	RPRJ_HINT,
 	RPRJ_EVAL,
+	RPRJ_XREF,
 	RPRJ_MAGIC = 0x4a525052,
 };
 #define RPRJ_VERSION 2
@@ -96,6 +97,17 @@ typedef struct {
 } R2ProjectHint;
 
 typedef struct {
+	ut32 mod; // UT32_MAX when absolute address
+	ut64 delta; // relative to mod vmin or absolute if mod==UT32_MAX
+} R2ProjectAddr;
+
+typedef struct {
+	R2ProjectAddr from;
+	R2ProjectAddr to;
+	ut32 type;
+} R2ProjectXref;
+
+typedef struct {
 	RCore *core;
 	R2ProjectStringTable *st;
 	RBuffer *b;
@@ -125,6 +137,7 @@ static const char *entry_type_tostring(int a) {
 	case RPRJ_THEM: return "Theme";
 	case RPRJ_HINT: return "Hints";
 	case RPRJ_EVAL: return "Evals";
+	case RPRJ_XREF: return "Xrefs";
 	}
 	return "UNKNOWN";
 }
@@ -179,9 +192,46 @@ static R2ProjectMod *mod_by_id(Cursor *cur, ut32 id) {
 	return (R2ProjectMod *)r_list_get_n (cur->mods, id);
 }
 
+static R2ProjectAddr addr_to_project(Cursor *cur, ut64 addr) {
+	R2ProjectAddr res = {
+		.mod = UT32_MAX,
+		.delta = addr,
+	};
+	ut32 mid = UT32_MAX;
+	R2ProjectMod *mod = find_mod (cur, addr, &mid);
+	if (mod) {
+		res.mod = mid;
+		res.delta = addr - mod->vmin;
+	}
+	return res;
+}
+
+static bool project_addr_to_va(Cursor *cur, R2ProjectAddr *addr, ut64 *va) {
+	if (addr->mod == UT32_MAX) {
+		*va = addr->delta;
+		return true;
+	}
+	R2ProjectMod *mod = mod_by_id (cur, addr->mod);
+	if (!mod) {
+		return false;
+	}
+	const ut64 size = mod->vmax >= mod->vmin? mod->vmax - mod->vmin + 1: 0;
+	if (size && addr->delta >= size) {
+		return false;
+	}
+	*va = mod->vmin + addr->delta;
+	return true;
+}
+
 static void write_le32(RBuffer *b, ut32 v) {
 	ut8 buf[4];
 	r_write_le32 (buf, v);
+	r_buf_write (b, buf, sizeof (buf));
+}
+
+static void write_le64(RBuffer *b, ut64 v) {
+	ut8 buf[8];
+	r_write_le64 (buf, v);
 	r_buf_write (b, buf, sizeof (buf));
 }
 
@@ -194,12 +244,7 @@ static ut8 emit_str(Cursor *cur, ut8 bit, const char *s) {
 }
 
 static void rprj_flag_write_one(Cursor *cur, RFlagItem *fi) {
-	ut32 mid = UT32_MAX;
-	ut64 delta = fi->addr;
-	R2ProjectMod *mod = find_mod (cur, fi->addr, &mid);
-	if (mod) {
-		delta = fi->addr - mod->vmin;
-	}
+	R2ProjectAddr addr = addr_to_project (cur, fi->addr);
 	const ut32 space_idx = fi->space? fi->space->privtag: UT32_MAX;
 	RFlagItemMeta *fim = r_flag_get_meta (cur->core->flags, fi->id);
 	const char *rn = (fi->realname && fi->realname != fi->name
@@ -223,8 +268,8 @@ static void rprj_flag_write_one(Cursor *cur, RFlagItem *fi) {
 	extras |= emit_str (cur, RPRJ_FLAG_COMMENT, fim? fim->comment: NULL);
 	extras |= emit_str (cur, RPRJ_FLAG_ALIAS, fim? fim->alias: NULL);
 	r_write_le32 (head + 0, rprj_st_append (cur->st, fi->name));
-	r_write_le32 (head + 4, mid);
-	r_write_le64 (head + 8, delta);
+	r_write_le32 (head + 4, addr.mod);
+	r_write_le64 (head + 8, addr.delta);
 	r_write_le32 (head + 16, fi->size);
 	head[20] = extras;
 	r_buf_write_at (cur->b, head_at, head, sizeof (head));
@@ -254,16 +299,10 @@ static void rprj_cmnt_write_one(Cursor *cur, RIntervalNode *node, RAnalMetaItem 
 	R2ProjectComment cmnt = {0};
 	ut64 va = node->start;
 	ut32 text = rprj_st_append (cur->st, mi->str);
-	ut32 mid = UT32_MAX;
-	R2ProjectMod *mod = find_mod (cur, va, &mid);
+	R2ProjectAddr addr = addr_to_project (cur, va);
 	r_write_le32 (&cmnt.text, text);
-	if (mod) {
-		r_write_le32 (&cmnt.mod, mid);
-		r_write_le64 (&cmnt.delta, va - mod->vmin);
-	} else {
-		r_write_le32 (&cmnt.mod, UT32_MAX);
-		r_write_le64 (&cmnt.delta, va);
-	}
+	r_write_le32 (&cmnt.mod, addr.mod);
+	r_write_le64 (&cmnt.delta, addr.delta);
 	const ut64 size = r_meta_node_size (node);
 	r_write_le64 (&cmnt.size, size);
 	r_buf_write (cur->b, (ut8*)&cmnt, sizeof (cmnt));
@@ -317,6 +356,47 @@ static void rprj_hint_read(RBuffer *b, R2ProjectHint *hint) {
 	hint->mod = r_read_le32 (buf + r_offsetof (R2ProjectHint, mod));
 	hint->delta = r_read_le64 (buf + r_offsetof (R2ProjectHint, delta));
 	hint->value = r_read_le64 (buf + r_offsetof (R2ProjectHint, value));
+}
+
+static bool rprj_xref_read(RBuffer *b, R2ProjectXref *xref) {
+	ut8 buf[4 + 8 + 4 + 8 + 4];
+	if (r_buf_read (b, buf, sizeof (buf)) != (st64)sizeof (buf)) {
+		return false;
+	}
+	xref->from.mod = r_read_le32 (buf);
+	xref->from.delta = r_read_le64 (buf + 4);
+	xref->to.mod = r_read_le32 (buf + 12);
+	xref->to.delta = r_read_le64 (buf + 16);
+	xref->type = r_read_le32 (buf + 24);
+	return true;
+}
+
+static void rprj_xref_write_one(Cursor *cur, RAnalRef *ref) {
+	R2ProjectAddr from = addr_to_project (cur, ref->at);
+	R2ProjectAddr to = addr_to_project (cur, ref->addr);
+	write_le32 (cur->b, from.mod);
+	write_le64 (cur->b, from.delta);
+	write_le32 (cur->b, to.mod);
+	write_le64 (cur->b, to.delta);
+	write_le32 (cur->b, ref->type);
+}
+
+static void rprj_xref_write(Cursor *cur) {
+	RVecAnalRef *refs = r_anal_refs_get (cur->core->anal, UT64_MAX);
+	const ut64 count_at = r_buf_at (cur->b);
+	write_le32 (cur->b, 0);
+	ut32 count = 0;
+	if (refs) {
+		RAnalRef *ref;
+		R_VEC_FOREACH (refs, ref) {
+			rprj_xref_write_one (cur, ref);
+			count++;
+		}
+		RVecAnalRef_free (refs);
+	}
+	ut8 buf[4];
+	r_write_le32 (buf, count);
+	r_buf_write_at (cur->b, count_at, buf, sizeof (buf));
 }
 
 static void rprj_header_write(RBuffer *b) {
@@ -388,17 +468,81 @@ static bool rprj_string_read(RBuffer *b, char **s) {
 	return true;
 }
 
-static ut32 checksum(RCore *core, ut64 va, size_t size) {
+static ut32 checksum_update(ut32 csum, const ut8 *buf, int len) {
+	int i;
+	for (i = 0; i < len; i++) {
+		csum = (csum << 1) ^ buf[i] ^ (csum & 1);
+	}
+	return csum;
+}
+
+static ut32 checksum(RCore *core, ut64 va, ut64 size) {
 	ut32 csum = 0;
-	ut8 *buf = malloc (size);
-	if (buf) {
-		r_io_read_at (core->io, va, buf, size);
-		int i;
-		for (i = 0; i < size; i++) {
-			csum = (csum << 1) ^ buf[i] ^ (csum & 1);
+	if (!size) {
+		return csum;
+	}
+	ut8 buf[1024];
+	ut64 samples[3] = { va, va, va };
+	const int sample_size = R_MIN (sizeof (buf), size);
+	if (size > (ut64)sample_size) {
+		samples[1] = va + (size / 2);
+		if (samples[1] > va + size - sample_size) {
+			samples[1] = va + size - sample_size;
+		}
+		samples[2] = va + size - sample_size;
+	}
+	int i;
+	for (i = 0; i < 3; i++) {
+		if (i && samples[i] == samples[i - 1]) {
+			continue;
+		}
+		const int n = r_io_read_at (core->io, samples[i], buf, sample_size);
+		if (n > 0) {
+			csum = checksum_update (csum ^ (ut32)(samples[i] - va), buf, n);
 		}
 	}
 	return csum;
+}
+
+static int mod_match_score(Cursor *cur, R2ProjectMod *mod, RIOMap *map) {
+	int score = 0;
+	const char *mod_name = rprj_st_get (cur->st, mod->name);
+	const char *mod_file = rprj_st_get (cur->st, mod->file);
+	const char *map_name = r_str_get (map->name);
+	const char *map_file = r_io_fd_get_name (cur->core->io, map->fd);
+	const ut64 mod_size = mod->vmax >= mod->vmin? mod->vmax - mod->vmin + 1: 0;
+	const ut64 map_size = r_io_map_size (map);
+	if (mod->csum) {
+		const ut32 csum = checksum (cur->core, r_io_map_from (map), map_size);
+		if (csum == mod->csum) {
+			score += 100;
+		}
+	}
+	if (mod_file && map_file) {
+		if (!strcmp (mod_file, map_file)) {
+			score += 30;
+		} else if (!strcmp (r_file_basename (mod_file), r_file_basename (map_file))) {
+			score += 15;
+		}
+	}
+	if (mod_name && map_name && !strcmp (mod_name, map_name)) {
+		score += 30;
+	}
+	if (mod_size && map_size) {
+		if (mod_size == map_size) {
+			score += 20;
+		} else {
+			const ut64 min = R_MIN (mod_size, map_size);
+			const ut64 max = R_MAX (mod_size, map_size);
+			if (max && (min * 100 / max) >= 90) {
+				score += 10;
+			}
+		}
+	}
+	if (mod->pmin == map->delta) {
+		score += 25;
+	}
+	return score;
 }
 
 static bool rprj_mods_read(RBuffer *b, R2ProjectMod *mod) {
@@ -432,38 +576,25 @@ static void rprj_mods_write_one(RBuffer *b, R2ProjectMod *mod) {
 }
 
 static RIOMap *coremod(Cursor *cur, R2ProjectMod *mod) {
-	// iterate over current maps and write
-	RBuffer *b = cur->b;
 	RIDStorage *maps = &cur->core->io->maps;
 	ut32 mapid;
-	r_id_storage_get_lowest (maps, &mapid);
-	ut64 at = r_buf_at (b);
-	ut64 bsz = r_buf_size (b);
-	const char *mod_name = rprj_st_get (cur->st, mod->name);
+	if (!r_id_storage_get_lowest (maps, &mapid)) {
+		return NULL;
+	}
+	RIOMap *best = NULL;
+	int best_score = 0;
 	do {
 		RIOMap *m = r_id_storage_get (maps, mapid);
 		if (!m) {
-			R_LOG_WARN ("Cannot find mapid %d", mapid);
-			break;
+			continue;
 		}
-		const char *name = r_str_get (m->name);
-		ut64 va = r_io_map_from (m);
-		ut32 csum = checksum (cur->core, va, 1024);
-		if (csum && csum == mod->csum) {
-			return m;
+		const int score = mod_match_score (cur, mod, m);
+		if (score > best_score) {
+			best = m;
+			best_score = score;
 		}
-		// XXX name is a very bad heuristic for 1:1 mapping
-		if (mod_name && !strcmp (name, mod_name)) {
-			return m;
-		}
-		if (at + sizeof (R2ProjectMod) >= bsz) {
-			// should never happen
-			break;
-		}
-		at += sizeof (R2ProjectMod);
-		r_buf_seek (b, at, SEEK_SET);
 	} while (r_id_storage_get_next (maps, &mapid));
-	return NULL;
+	return best_score >= 50? best: NULL;
 }
 
 static void rprj_mods_write(Cursor *cur) {
@@ -471,14 +602,13 @@ static void rprj_mods_write(Cursor *cur) {
 	RBuffer *b = cur->b;
 	RIDStorage *maps = &cur->core->io->maps;
 	ut32 mapid;
-	r_id_storage_get_lowest (maps, &mapid);
-	ut64 at = r_buf_at (b);
-	ut64 bsz = r_buf_size (b);
+	if (!r_id_storage_get_lowest (maps, &mapid)) {
+		return;
+	}
 	do {
 		RIOMap *m = r_id_storage_get (maps, mapid);
 		if (!m) {
-			R_LOG_WARN ("Cannot find mapid %d", mapid);
-			break;
+			continue;
 		}
 		ut64 va = r_io_map_from (m);
 		ut64 va_end = r_io_map_to (m);
@@ -489,20 +619,15 @@ static void rprj_mods_write(Cursor *cur) {
 
 		R2ProjectMod mod = {0};
 		mod.name = rprj_st_append (cur->st, name);
-		mod.file = UT32_MAX;
+		const char *file = r_io_fd_get_name (cur->core->io, m->fd);
+		mod.file = R_STR_ISNOTEMPTY (file)? rprj_st_append (cur->st, file): UT32_MAX;
 		mod.pmin = pa;
 		mod.pmax = pa_end;
 		mod.vmin = va;
 		mod.vmax = va_end;
-		mod.csum = checksum (cur->core, va, 1024);
+		mod.csum = checksum (cur->core, va, r_io_map_size (m));
 		rprj_mods_write_one (b, &mod);
 		r_list_append (cur->mods, r_mem_dup (&mod, sizeof (mod)));
-		if (at + sizeof (R2ProjectMod) >= bsz) {
-			// should never happen
-			break;
-		}
-		at += sizeof (R2ProjectMod);
-		r_buf_seek (b, at, SEEK_SET);
 	} while (r_id_storage_get_next (maps, &mapid));
 }
 
@@ -711,6 +836,10 @@ static void prj_save(RCore *core, const char *file) {
 		rprj_hints_write (&cur);
 		rprj_entry_end (b, at);
 	}
+	if (rprj_entry_begin (b, &at, RPRJ_XREF, 1)) {
+		rprj_xref_write (&cur);
+		rprj_entry_end (b, at);
+	}
 	if (rprj_entry_begin (b, &at, RPRJ_EVAL, 1)) {
 		rprj_eval_write (&cur);
 		rprj_entry_end (b, at);
@@ -753,7 +882,7 @@ static ut8 *rprj_find(RBuffer *b, ut32 type, ut32 *size) {
 			R_LOG_ERROR ("find: Cannot read entry");
 			break;
 		}
-		if (entry.size > ST32_MAX) {
+		if (entry.size < sizeof (R2ProjectEntry) || entry.size > ST32_MAX) {
 			R_LOG_ERROR ("invalid size");
 			break;
 		}
@@ -827,14 +956,14 @@ static void rprj_flag_load(Cursor *cur, int mode) {
 			R_LOG_WARN ("Invalid flag string index %u", flag.name);
 			continue;
 		}
-		ut64 va = flag.delta;
-		if (flag.mod != UT32_MAX) {
-			R2ProjectMod *mod = mod_by_id (cur, flag.mod);
-			if (!mod) {
-				R_LOG_WARN ("Cannot find map for %s", flag_name);
-				continue;
-			}
-			va += mod->vmin;
+		R2ProjectAddr addr = {
+			.mod = flag.mod,
+			.delta = flag.delta,
+		};
+		ut64 va = UT64_MAX;
+		if (!project_addr_to_va (cur, &addr, &va)) {
+			R_LOG_WARN ("Cannot resolve address for flag %s", flag_name);
+			continue;
 		}
 		if (mode & MODE_SCRIPT) {
 			// flag names are sanitized by r_flag_set; meta fields may contain
@@ -921,7 +1050,7 @@ static void prj_load(RCore *core, const char *file, int mode) {
 	RBuffer *mods = modsbuf? r_buf_new_with_bytes (modsbuf, modsize): NULL;
 	if (mods) {
 		ut32 n = 0;
-		while (n < modsize) {
+		while (n + sizeof (R2ProjectMod) <= modsize) {
 			R2ProjectMod mod;
 			if (!rprj_mods_read (mods, &mod)) {
 				R_LOG_ERROR ("Cannot read mod");
@@ -952,6 +1081,10 @@ static void prj_load(RCore *core, const char *file, int mode) {
 			R_LOG_ERROR ("Cannot read entry");
 			break;
 		}
+		if (entry.size < sizeof (R2ProjectEntry) || r_buf_at (b) + entry.size - sizeof (R2ProjectEntry) > bsz) {
+			R_LOG_ERROR ("Invalid entry size %u", entry.size);
+			break;
+		}
 		if (mode & MODE_LOG) {
 			r_cons_printf (core->cons, "  Entry<%s> {\n", entry_type_tostring (entry.type));
 			r_cons_printf (core->cons, "    type = 0x%02x\n", entry.type);
@@ -971,7 +1104,7 @@ static void prj_load(RCore *core, const char *file, int mode) {
 				// for (i = sizeof (R2ProjectEntry); i < entry.size; i++)
 				if (mode & MODE_LOG) {
 					r_cons_printf (core->cons, "      => (%d) ", (int)strlen (data + p));
-					for (i = 0; i < entry.size - 16; i++) {
+					for (i = 0; i < entry.size - sizeof (R2ProjectEntry); i++) {
 						const char ch = data[p + i];
 						if (ch == 0) {
 							r_cons_printf (core->cons, "\n      => (%d) ", (int)strlen (data + i + p + 1));
@@ -1031,8 +1164,8 @@ static void prj_load(RCore *core, const char *file, int mode) {
 		case RPRJ_CMNT:
 			{
 				ut64 at = r_buf_at (b);
-				ut64 last = at + entry.size - 16;
-				while (at < last) {
+				ut64 last = at + entry.size - sizeof (R2ProjectEntry);
+				while (at + sizeof (R2ProjectComment) <= last) {
 					R2ProjectComment cmnt;
 					rprj_cmnt_read (b, &cmnt);
 					const char *cmnt_text = rprj_st_get (&st, cmnt.text);
@@ -1041,9 +1174,12 @@ static void prj_load(RCore *core, const char *file, int mode) {
 						at += sizeof (cmnt);
 						continue;
 					}
-					R2ProjectMod *mod = mod_by_id (&cur, cmnt.mod);
-					if (mod) {
-						ut64 va = mod->vmin + cmnt.delta;
+					R2ProjectAddr addr = {
+						.mod = cmnt.mod,
+						.delta = cmnt.delta,
+					};
+					ut64 va = UT64_MAX;
+					if (project_addr_to_va (&cur, &addr, &va)) {
 						char *b64 = sdb_encode ((const ut8 *)cmnt_text, strlen (cmnt_text));
 						if (b64) {
 							char *cmd = r_str_newf ("CCu base64:%s", b64);
@@ -1057,7 +1193,7 @@ static void prj_load(RCore *core, const char *file, int mode) {
 							free (b64);
 						}
 					} else {
-						R_LOG_WARN ("Cant find map for %s", cmnt_text);
+						R_LOG_WARN ("Cannot resolve address for comment %s", cmnt_text);
 					}
 					at += sizeof (cmnt);
 				}
@@ -1069,15 +1205,57 @@ static void prj_load(RCore *core, const char *file, int mode) {
 		case RPRJ_EVAL:
 			rprj_eval_load (&cur, mode);
 			break;
+		case RPRJ_XREF:
+			{
+				ut32 count = 0;
+				if (!read_le32 (b, &count)) {
+					break;
+				}
+				const ut64 bmax = (r_buf_size (b) - r_buf_at (b)) / 28;
+				if (count > bmax) {
+					count = (ut32)bmax;
+				}
+				ut32 i;
+				for (i = 0; i < count; i++) {
+					R2ProjectXref xref;
+					if (!rprj_xref_read (b, &xref)) {
+						R_LOG_WARN ("Truncated xref record %u/%u", i, count);
+						break;
+					}
+					ut64 from = UT64_MAX;
+					ut64 to = UT64_MAX;
+					if (!project_addr_to_va (&cur, &xref.from, &from)
+							|| !project_addr_to_va (&cur, &xref.to, &to)) {
+						R_LOG_WARN ("Cannot resolve xref record %u/%u", i, count);
+						continue;
+					}
+					if (mode & MODE_SCRIPT) {
+						r_cons_printf (core->cons, "'ax%c 0x%08"PFMT64x" 0x%08"PFMT64x"\n",
+							(char)R_ANAL_REF_TYPE_MASK (xref.type), to, from);
+					}
+					if (mode & MODE_LOAD) {
+						r_anal_xrefs_set (core->anal, from, to, xref.type);
+					}
+				}
+			}
+			break;
 		case RPRJ_HINT:
 			{
 				ut64 at = r_buf_at (b);
-				ut64 last = at + entry.size - 16;
-				while (at < last) {
+				ut64 last = at + entry.size - sizeof (R2ProjectEntry);
+				while (at + sizeof (R2ProjectHint) <= last) {
 					R2ProjectHint hint;
 					rprj_hint_read (b, &hint);
-					R2ProjectMod *mod = mod_by_id (&cur, hint.mod);
-					ut64 va = mod? mod->vmin + hint.delta: hint.delta;
+					R2ProjectAddr addr = {
+						.mod = hint.mod,
+						.delta = hint.delta,
+					};
+					ut64 va = UT64_MAX;
+					if (!project_addr_to_va (&cur, &addr, &va)) {
+						R_LOG_WARN ("Cannot resolve hint record at 0x%08"PFMT64x, at);
+						at += sizeof (hint);
+						continue;
+					}
 					if (hint.kind == 1) { // immbase
 						int base = (int)hint.value;
 						if (mode & MODE_SCRIPT) {
