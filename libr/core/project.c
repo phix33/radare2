@@ -321,6 +321,38 @@ static bool r_core_project_load(RCore *core, const char *prj_name, const char *r
 	const bool scr_prompt = r_config_get_b (core->config, "scr.prompt");
 	(void) load_project_rop (core, prj_name);
 
+	if (r_config_get_b (core->config, "prj.new")) {
+		char *prj_dir = r_file_dirname (rcpath);
+		char *prj_bin = prj_dir? r_file_new (prj_dir, "prj.bin", NULL): NULL;
+		if (prj_bin && r_file_exists (prj_bin)) {
+			bool ret = r_core_cmdf (core, "prj load %s", prj_bin) != -1;
+			free (prj_bin);
+			char *prj_path = prj_dir;
+			if (prj_path) {
+				Rvc *vc = rvc_open (prj_path, RVC_TYPE_GIT);
+				core->prj->rvc = vc;
+			} else {
+				R_LOG_ERROR ("Failed to load rvc");
+			}
+			if (r_config_get_b (core->config, "prj.history")) {
+				char *file = r_file_new (prj_path, "history", NULL);
+				r_line_hist_free (core->cons->line); // R2_600 - hist_reset ?
+				r_line_hist_load (core->cons->line, file);
+				free (file);
+			}
+			free (prj_path);
+			r_config_set_b (core->config, "cfg.fortunes", cfg_fortunes);
+			r_config_set_b (core->config, "scr.interactive", scr_interactive);
+			r_config_set_b (core->config, "scr.prompt", scr_prompt);
+			r_config_bump (core->config, "asm.arch");
+			r_config_set (core->config, "prj.name", prj_name);
+			return ret;
+		}
+		R_LOG_WARN ("Binary project '%s' not found; falling back to legacy script", prj_bin? prj_bin: "prj.bin");
+		free (prj_bin);
+		free (prj_dir);
+	}
+
 	// check if the target binary file exists before loading the project script
 	char *rc_abspath = r_file_abspath (rcpath);
 	char *rc_data = r_file_slurp (rc_abspath? rc_abspath: rcpath, NULL);
