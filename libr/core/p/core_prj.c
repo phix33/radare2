@@ -51,7 +51,8 @@ enum {
 	MODE_LOAD = 1,
 	MODE_LOG = 2,
 	MODE_CMD = 4,
-	MODE_SCRIPT = 8
+	MODE_SCRIPT = 8,
+	MODE_DIFF = 16
 };
 
 typedef struct {
@@ -167,6 +168,45 @@ typedef struct {
 	const char *comment;
 	const char *alias;
 } FlagExtras;
+
+typedef struct {
+	char *name;
+	char *type;
+	st32 delta;
+	ut8 kind;
+	ut8 isarg;
+	bool seen;
+} R2ProjectDiffVar;
+
+typedef struct {
+	ut64 addr;
+	ut64 size;
+	ut64 jump;
+	ut64 fail;
+	RColor color;
+	bool has_color;
+	bool seen;
+} R2ProjectDiffBlock;
+
+typedef struct {
+	ut64 addr;
+} R2ProjectDiffFunction;
+
+typedef struct {
+	ut64 addr;
+} R2ProjectDiffAddr;
+
+typedef struct {
+	ut64 from;
+	ut64 to;
+	ut32 type;
+	bool seen;
+} R2ProjectDiffXref;
+
+typedef struct {
+	Cursor *cur;
+	RList *seen;
+} R2ProjectDiffCtx;
 
 static const char *entry_type_tostring(int a) {
 	switch (a) {
@@ -1049,7 +1089,7 @@ static void rprj_eval_write(Cursor *cur) {
 		if (!evalkey_is_saveable (node)) {
 			continue;
 		}
-		const char *val = r_str_get (node->value);
+		const char *val = r_config_get (cur->core->config, node->name);
 		ut32 k = rprj_st_append (cur->st, node->name);
 		ut32 v = rprj_st_append (cur->st, val);
 		if (k == UT32_MAX || v == UT32_MAX) {
@@ -1095,6 +1135,12 @@ static void rprj_eval_load(Cursor *cur, int mode) {
 		if (mode & MODE_SCRIPT) {
 			r_cons_printf (core->cons, "'e %s=%s\n", name, value);
 		}
+		if (mode & MODE_DIFF) {
+			const char *curval = r_config_get (core->config, name);
+			if (curval && strcmp (curval, value)) {
+				r_cons_printf (core->cons, "'e %s=%s\n", name, curval);
+			}
+		}
 		if (mode & MODE_LOAD) {
 			r_config_set (core->config, name, value);
 		}
@@ -1116,6 +1162,7 @@ static void prjhelp(void) {
 	R_LOG_INFO ("prj info [file]   - show information about the project file");
 	R_LOG_INFO ("prj load [file]   - merge project information into the current session");
 	R_LOG_INFO ("prj open [file]   - close current session and open the project from scratch");
+	R_LOG_INFO ("prj diff [file]   - print commands for differences from file to current session");
 	R_LOG_INFO ("prj r2 [file]     - print an r2 script for parsing purposes");
 }
 
@@ -1256,6 +1303,11 @@ static FlagExtras read_flag_extras(Cursor *cur, ut8 extras) {
 	return fe;
 }
 
+static void rprj_diff_seen_addr(RList *seen, ut64 addr);
+static void rprj_print_flag_script(Cursor *cur, RFlagItem *fi);
+static bool rprj_flag_differs(RFlag *flags, RFlagItem *fi, ut64 addr, ut64 size, FlagExtras *fe, ut8 extras);
+static bool rprj_diff_flag_foreach_cb(RFlagItem *fi, void *user);
+
 static void rprj_flag_load(Cursor *cur, int mode) {
 	RCore *core = cur->core;
 	RBuffer *b = cur->b;
@@ -1268,6 +1320,7 @@ static void rprj_flag_load(Cursor *cur, int mode) {
 	if (fcount > bmax) {
 		fcount = (ut32)bmax;
 	}
+	RList *seen = (mode & MODE_DIFF)? r_list_newf (free): NULL;
 	ut32 i;
 	for (i = 0; i < fcount; i++) {
 		R2ProjectFlag flag;
@@ -1297,6 +1350,17 @@ static void rprj_flag_load(Cursor *cur, int mode) {
 			r_cons_printf (core->cons, fe.space? "'fs %s\n": "'fs *\n", fe.space);
 			r_cons_printf (core->cons, "'f %s %u 0x%08"PFMT64x"\n",
 				flag_name, flag.size, va);
+		}
+		if (mode & MODE_DIFF) {
+			RFlagItem *fi = r_flag_get (core->flags, flag_name);
+			if (fi) {
+				rprj_diff_seen_addr (seen, fi->id);
+				if (rprj_flag_differs (core->flags, fi, va, flag.size, &fe, flag.extras)) {
+					rprj_print_flag_script (cur, fi);
+				}
+			} else {
+				r_cons_printf (core->cons, "'f- %s\n", flag_name);
+			}
 		}
 		if (mode & MODE_LOAD) {
 			RFlagItem *fi = fe.space
@@ -1328,6 +1392,11 @@ static void rprj_flag_load(Cursor *cur, int mode) {
 			}
 		}
 	}
+	if (mode & MODE_DIFF) {
+		R2ProjectDiffCtx ctx = { cur, seen };
+		r_flag_foreach (core->flags, rprj_diff_flag_foreach_cb, &ctx);
+	}
+	r_list_free (seen);
 }
 
 static bool rprj_function_is_registered(RAnal *anal, RAnalFunction *fcn) {
@@ -1486,6 +1555,334 @@ static void rprj_var_load(Cursor *cur, RAnalFunction *fcn, R2ProjectVar *pvar, i
 	}
 }
 
+static void rprj_diff_var_free(R2ProjectDiffVar *var) {
+	if (var) {
+		free (var->name);
+		free (var->type);
+		free (var);
+	}
+}
+
+static R2ProjectDiffVar *rprj_diff_var_find(RList *vars, ut8 kind, st32 delta) {
+	RListIter *iter;
+	R2ProjectDiffVar *var;
+	r_list_foreach (vars, iter, var) {
+		if (var->kind == kind && var->delta == delta) {
+			return var;
+		}
+	}
+	return NULL;
+}
+
+static bool rprj_diff_has_function(RList *fcns, ut64 addr) {
+	RListIter *iter;
+	R2ProjectDiffFunction *fcn;
+	r_list_foreach (fcns, iter, fcn) {
+		if (fcn->addr == addr) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool rprj_diff_has_addr(RList *addrs, ut64 addr) {
+	RListIter *iter;
+	R2ProjectDiffAddr *a;
+	r_list_foreach (addrs, iter, a) {
+		if (a->addr == addr) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static R2ProjectDiffBlock *rprj_diff_block_find(RList *bbs, ut64 addr) {
+	RListIter *iter;
+	R2ProjectDiffBlock *bb;
+	r_list_foreach (bbs, iter, bb) {
+		if (bb->addr == addr) {
+			return bb;
+		}
+	}
+	return NULL;
+}
+
+static R2ProjectDiffXref *rprj_diff_xref_find(RList *xrefs, ut64 from, ut64 to, ut32 type) {
+	RListIter *iter;
+	R2ProjectDiffXref *xref;
+	r_list_foreach (xrefs, iter, xref) {
+		if (xref->from == from && xref->to == to
+				&& R_ANAL_REF_TYPE_MASK (xref->type) == R_ANAL_REF_TYPE_MASK (type)) {
+			return xref;
+		}
+	}
+	return NULL;
+}
+
+static void rprj_diff_seen_addr(RList *seen, ut64 addr) {
+	R2ProjectDiffAddr *a = R_NEW (R2ProjectDiffAddr);
+	a->addr = addr;
+	r_list_append (seen, a);
+}
+
+static void rprj_print_comment_script(Cursor *cur, ut64 addr, const char *comment) {
+	if (R_STR_ISEMPTY (comment)) {
+		r_cons_printf (cur->core->cons, "'CC- @ 0x%08"PFMT64x"\n", addr);
+		return;
+	}
+	char *b64 = sdb_encode ((const ut8 *)comment, strlen (comment));
+	if (b64) {
+		r_cons_printf (cur->core->cons, "'@0x%08"PFMT64x"'CCu base64:%s\n", addr, b64);
+		free (b64);
+	}
+}
+
+static void rprj_print_flag_script(Cursor *cur, RFlagItem *fi) {
+	if (!fi || R_STR_ISEMPTY (fi->name)) {
+		return;
+	}
+	const char *space = fi->space? fi->space->name: NULL;
+	r_cons_printf (cur->core->cons, space? "'fs %s\n": "'fs *\n", space);
+	r_cons_printf (cur->core->cons, "'f %s %"PFMT64u" 0x%08"PFMT64x"\n",
+		fi->name, fi->size, fi->addr);
+	if (fi->realname && strcmp (fi->realname, fi->name)) {
+		char *rn = sdb_encode ((const ut8 *)fi->realname, strlen (fi->realname));
+		const char *raw = R_STR_ISNOTEMPTY (fi->rawname)? fi->rawname: fi->name;
+		char *rw = sdb_encode ((const ut8 *)raw, strlen (raw));
+		if (rn && rw) {
+			r_cons_printf (cur->core->cons, "'@0x%08"PFMT64x"'fu= 1 %s %s %s\n",
+				fi->addr, fi->name, rw, rn);
+		}
+		free (rn);
+		free (rw);
+	}
+	RFlagItemMeta *fim = r_flag_get_meta (cur->core->flags, fi->id);
+	if (!fim) {
+		return;
+	}
+	if (R_STR_ISNOTEMPTY (fim->color)) {
+		r_cons_printf (cur->core->cons, "'fc %s=%s\n", fi->name, fim->color);
+	}
+	if (R_STR_ISNOTEMPTY (fim->comment)) {
+		char *b64 = sdb_encode ((const ut8 *)fim->comment, strlen (fim->comment));
+		if (b64) {
+			r_cons_printf (cur->core->cons, "'fC %s base64:%s\n", fi->name, b64);
+			free (b64);
+		}
+	}
+	if (R_STR_ISNOTEMPTY (fim->alias)) {
+		r_cons_printf (cur->core->cons, "'fa %s %s\n", fi->name, fim->alias);
+	}
+}
+
+static bool rprj_flag_differs(RFlag *flags, RFlagItem *fi, ut64 addr, ut64 size, FlagExtras *fe, ut8 extras) {
+	if (!fi || fi->addr != addr || fi->size != size) {
+		return true;
+	}
+	const char *space = fi->space? fi->space->name: NULL;
+	if (strcmp (r_str_get (space), r_str_get (fe->space))) {
+		return true;
+	}
+	if ((fi->demangled? RPRJ_FLAG_DEMANGLED: 0) != (extras & RPRJ_FLAG_DEMANGLED)) {
+		return true;
+	}
+	const char *realname = (fi->realname && strcmp (fi->realname, fi->name))? fi->realname: NULL;
+	const char *rawname = (R_STR_ISNOTEMPTY (fi->rawname) && strcmp (fi->rawname, fi->name))? fi->rawname: NULL;
+	if (strcmp (r_str_get (realname), r_str_get (fe->realname))) {
+		return true;
+	}
+	if (strcmp (r_str_get (rawname), r_str_get (fe->rawname))) {
+		return true;
+	}
+	RFlagItemMeta *fim = r_flag_get_meta (flags, fi->id);
+	return strcmp (r_str_get (fim? fim->type: NULL), r_str_get (fe->type))
+		|| strcmp (r_str_get (fim? fim->color: NULL), r_str_get (fe->color))
+		|| strcmp (r_str_get (fim? fim->comment: NULL), r_str_get (fe->comment))
+		|| strcmp (r_str_get (fim? fim->alias: NULL), r_str_get (fe->alias));
+}
+
+static void rprj_print_xref_script(Cursor *cur, RAnalRef *ref) {
+	r_cons_printf (cur->core->cons, "'ax%c 0x%08"PFMT64x" 0x%08"PFMT64x"\n",
+		(char)R_ANAL_REF_TYPE_MASK (ref->type), ref->addr, ref->at);
+}
+
+static bool rprj_diff_flag_foreach_cb(RFlagItem *fi, void *user) {
+	R2ProjectDiffCtx *ctx = (R2ProjectDiffCtx *)user;
+	if (fi && !rprj_diff_has_addr (ctx->seen, fi->id)) {
+		rprj_print_flag_script (ctx->cur, fi);
+	}
+	return true;
+}
+
+static bool rprj_diff_hints_cb(ut64 addr, const RVecAnalAddrHintRecord *records, void *user) {
+	R2ProjectDiffCtx *ctx = (R2ProjectDiffCtx *)user;
+	const RAnalAddrHintRecord *record;
+	R_VEC_FOREACH (records, record) {
+		ut64 key = (addr << 8) | (ut64)record->type;
+		if (rprj_diff_has_addr (ctx->seen, key)) {
+			continue;
+		}
+		switch (record->type) {
+		case R_ANAL_ADDR_HINT_TYPE_IMMBASE:
+			r_cons_printf (ctx->cur->core->cons, "'ahi %d @ 0x%08"PFMT64x"\n", record->immbase, addr);
+			break;
+		case R_ANAL_ADDR_HINT_TYPE_NEW_BITS:
+			r_cons_printf (ctx->cur->core->cons, "'ahb %d @ 0x%08"PFMT64x"\n", record->newbits, addr);
+			break;
+		default:
+			break;
+		}
+	}
+	return true;
+}
+
+static bool rprj_current_hint_value(RAnal *anal, ut64 addr, RAnalAddrHintType type, int *value) {
+	const RVecAnalAddrHintRecord *records = r_anal_addr_hints_at (anal, addr);
+	if (!records) {
+		return false;
+	}
+	const RAnalAddrHintRecord *record;
+	R_VEC_FOREACH (records, record) {
+		if (record->type == type) {
+			*value = type == R_ANAL_ADDR_HINT_TYPE_IMMBASE? record->immbase: record->newbits;
+			return true;
+		}
+	}
+	return false;
+}
+
+static void rprj_print_var_script(Cursor *cur, RAnalVar *var, ut64 fcn_addr) {
+	if (!var || R_STR_ISEMPTY (var->name)) {
+		return;
+	}
+	const char *type = r_str_get (var->type);
+	switch (var->kind) {
+	case R_ANAL_VAR_KIND_REG:
+		if (R_STR_ISNOTEMPTY (var->regname)) {
+			r_cons_printf (cur->core->cons, "'afvr %s %s %s @ 0x%08"PFMT64x"\n",
+				var->regname, var->name, type, fcn_addr);
+		}
+		break;
+	case R_ANAL_VAR_KIND_BPV:
+		r_cons_printf (cur->core->cons, "'afvb %d %s %s @ 0x%08"PFMT64x"\n",
+			var->delta, var->name, type, fcn_addr);
+		break;
+	case R_ANAL_VAR_KIND_SPV:
+		r_cons_printf (cur->core->cons, "'afvs %d %s %s @ 0x%08"PFMT64x"\n",
+			var->delta, var->name, type, fcn_addr);
+		break;
+	default:
+		break;
+	}
+}
+
+static void rprj_print_function_attrs(Cursor *cur, RAnalFunction *fcn) {
+	if (R_STR_ISNOTEMPTY (fcn->callconv)) {
+		r_cons_printf (cur->core->cons, "'afc %s @ 0x%08"PFMT64x"\n", fcn->callconv, fcn->addr);
+	}
+	if (fcn->maxstack) {
+		r_cons_printf (cur->core->cons, "'afS %d @ 0x%08"PFMT64x"\n", fcn->maxstack, fcn->addr);
+	}
+	if (fcn->is_noreturn) {
+		r_cons_printf (cur->core->cons, "'tn 0x%08"PFMT64x"\n", fcn->addr);
+	}
+}
+
+static void rprj_print_function_script(Cursor *cur, RAnalFunction *fcn) {
+	if (!fcn || R_STR_ISEMPTY (fcn->name)) {
+		return;
+	}
+	r_cons_printf (cur->core->cons, "'af+ 0x%08"PFMT64x" %s\n", fcn->addr, fcn->name);
+	rprj_print_function_attrs (cur, fcn);
+	RListIter *iter;
+	RAnalBlock *bb;
+	r_list_foreach (fcn->bbs, iter, bb) {
+		r_cons_printf (cur->core->cons, "'afb+ 0x%08"PFMT64x" 0x%08"PFMT64x" %"PFMT64u" 0x%08"PFMT64x" 0x%08"PFMT64x"\n",
+			fcn->addr, bb->addr, bb->size, bb->jump, bb->fail);
+		if (color_is_set (&bb->color)) {
+			r_cons_printf (cur->core->cons, "'afbc rgb:%02x%02x%02x 0x%08"PFMT64x"\n",
+				bb->color.r, bb->color.g, bb->color.b, bb->addr);
+		}
+	}
+	RAnalVar **var;
+	R_VEC_FOREACH (&fcn->vars, var) {
+		rprj_print_var_script (cur, *var, fcn->addr);
+	}
+}
+
+static void rprj_diff_function_blocks(Cursor *cur, RAnalFunction *fcn, RList *pbbs) {
+	RListIter *iter;
+	RAnalBlock *bb;
+	r_list_foreach (fcn->bbs, iter, bb) {
+		R2ProjectDiffBlock *pbb = rprj_diff_block_find (pbbs, bb->addr);
+		if (pbb) {
+			pbb->seen = true;
+		}
+		const bool has_color = color_is_set (&bb->color);
+		if (!pbb || pbb->size != bb->size || pbb->jump != bb->jump || pbb->fail != bb->fail) {
+			r_cons_printf (cur->core->cons, "'afb+ 0x%08"PFMT64x" 0x%08"PFMT64x" %"PFMT64u" 0x%08"PFMT64x" 0x%08"PFMT64x"\n",
+				fcn->addr, bb->addr, bb->size, bb->jump, bb->fail);
+		}
+		if ((pbb && (pbb->has_color != has_color || (has_color && !color_eq (&pbb->color, &bb->color))))
+				|| (!pbb && has_color)) {
+			if (has_color) {
+				r_cons_printf (cur->core->cons, "'afbc rgb:%02x%02x%02x 0x%08"PFMT64x"\n",
+					bb->color.r, bb->color.g, bb->color.b, bb->addr);
+			} else {
+				r_cons_printf (cur->core->cons, "'afbc- 0x%08"PFMT64x"\n", bb->addr);
+			}
+		}
+	}
+	R2ProjectDiffBlock *pbb;
+	r_list_foreach (pbbs, iter, pbb) {
+		if (!pbb->seen) {
+			r_cons_printf (cur->core->cons, "'afb- 0x%08"PFMT64x"\n", pbb->addr);
+		}
+	}
+}
+
+static void rprj_diff_function_attrs(Cursor *cur, RAnalFunction *fcn, R2ProjectFunctionAttr *attr) {
+	const char *cc = attr && attr->cc != UT32_MAX? rprj_st_get (cur->st, attr->cc): NULL;
+	const bool noret = attr && (attr->flags & RPRJ_FUNC_ATTR_NORETURN);
+	const st64 stack = attr? (st64)attr->stack: 0;
+	if (strcmp (r_str_get (cc), r_str_get (fcn->callconv))) {
+		if (R_STR_ISNOTEMPTY (fcn->callconv)) {
+			r_cons_printf (cur->core->cons, "'afc %s @ 0x%08"PFMT64x"\n", fcn->callconv, fcn->addr);
+		}
+	}
+	if (stack != fcn->maxstack) {
+		r_cons_printf (cur->core->cons, "'afS %d @ 0x%08"PFMT64x"\n", fcn->maxstack, fcn->addr);
+	}
+	if (noret != fcn->is_noreturn) {
+		r_cons_printf (cur->core->cons, fcn->is_noreturn
+			? "'tn 0x%08"PFMT64x"\n"
+			: "'tn- 0x%08"PFMT64x"\n", fcn->addr);
+	}
+}
+
+static void rprj_diff_function_vars(Cursor *cur, RAnalFunction *fcn, RList *pvars) {
+	RAnalVar **varp;
+	R_VEC_FOREACH (&fcn->vars, varp) {
+		RAnalVar *var = *varp;
+		R2ProjectDiffVar *pvar = rprj_diff_var_find (pvars, var->kind, var->delta);
+		if (pvar) {
+			pvar->seen = true;
+		}
+		if (!pvar || pvar->isarg != (var->isarg? 1: 0)
+				|| strcmp (r_str_get (pvar->name), r_str_get (var->name))
+				|| strcmp (r_str_get (pvar->type), r_str_get (var->type))) {
+			rprj_print_var_script (cur, var, fcn->addr);
+		}
+	}
+	RListIter *iter;
+	R2ProjectDiffVar *pvar;
+	r_list_foreach (pvars, iter, pvar) {
+		if (!pvar->seen && R_STR_ISNOTEMPTY (pvar->name)) {
+			r_cons_printf (cur->core->cons, "'afv- %s @ 0x%08"PFMT64x"\n", pvar->name, fcn->addr);
+		}
+	}
+}
+
 static void rprj_function_load(Cursor *cur, int mode, ut64 next_entry) {
 	RBuffer *b = cur->b;
 	RCore *core = cur->core;
@@ -1548,6 +1945,7 @@ static void rprj_function_load(Cursor *cur, int mode, ut64 next_entry) {
 		free (colors);
 		return;
 	}
+	RList *pfcns = (mode & MODE_DIFF)? r_list_newf (free): NULL;
 	ut32 i;
 	for (i = 0; i < count && r_buf_at (b) < next_entry; i++) {
 		R2ProjectFunction pfcn;
@@ -1563,6 +1961,12 @@ static void rprj_function_load(Cursor *cur, int mode, ut64 next_entry) {
 		RAnalFunction *fcn = NULL;
 		const bool resolved = project_addr_to_va (cur, &pfcn.addr, &va);
 		if (resolved) {
+			if (mode & MODE_DIFF) {
+				R2ProjectDiffFunction *df = R_NEW (R2ProjectDiffFunction);
+				df->addr = va;
+				r_list_append (pfcns, df);
+				fcn = rprj_function_get_registered (core->anal, va);
+			}
 			if (mode & MODE_SCRIPT) {
 				r_cons_printf (core->cons, "'af+ 0x%08"PFMT64x" %s\n", va, name? name: "");
 			}
@@ -1585,12 +1989,31 @@ static void rprj_function_load(Cursor *cur, int mode, ut64 next_entry) {
 		} else {
 			R_LOG_WARN ("Cannot resolve function record %u/%u", i, count);
 		}
+		RList *pbbs = (mode & MODE_DIFF)? r_list_newf (free): NULL;
+		RList *pvars = (mode & MODE_DIFF)? r_list_newf ((RListFree)rprj_diff_var_free): NULL;
 		ut32 j;
 		for (j = 0; j < pfcn.nbbs && r_buf_at (b) < next_entry; j++) {
 			R2ProjectBlock pbb;
 			if (!rprj_block_read (b, &pbb)) {
 				R_LOG_WARN ("Truncated basic block record %u/%u in function %u/%u", j, pfcn.nbbs, i, count);
+				r_list_free (pvars);
+				r_list_free (pbbs);
+				r_list_free (pfcns);
+				free (attrs);
+				free (colors);
 				return;
+			}
+			if ((mode & MODE_DIFF) && resolved) {
+				R2ProjectDiffBlock *dbb = R_NEW0 (R2ProjectDiffBlock);
+				dbb->size = pbb.size;
+				project_addr_to_va (cur, &pbb.addr, &dbb->addr);
+				project_addr_to_va (cur, &pbb.jump, &dbb->jump);
+				project_addr_to_va (cur, &pbb.fail, &dbb->fail);
+				if (pbb.color < ncolors) {
+					dbb->has_color = true;
+					dbb->color = colors[pbb.color];
+				}
+				r_list_append (pbbs, dbb);
 			}
 			if (resolved) {
 				rprj_block_load (cur, fcn, &pbb, mode, va, colors, ncolors);
@@ -1600,15 +2023,55 @@ static void rprj_function_load(Cursor *cur, int mode, ut64 next_entry) {
 			R2ProjectVar pvar;
 			if (!rprj_var_read (b, &pvar)) {
 				R_LOG_WARN ("Truncated variable record %u/%u in function %u/%u", j, pfcn.nvars, i, count);
+				r_list_free (pvars);
+				r_list_free (pbbs);
+				r_list_free (pfcns);
 				free (attrs);
 				free (colors);
 				return;
+			}
+			if ((mode & MODE_DIFF) && resolved) {
+				const char *vname = rprj_st_get (st, pvar.name);
+				if (vname) {
+					R2ProjectDiffVar *dvar = R_NEW0 (R2ProjectDiffVar);
+					dvar->name = strdup (vname);
+					dvar->type = strdup (r_str_get (rprj_st_get (st, pvar.type)));
+					dvar->delta = pvar.delta;
+					dvar->kind = pvar.kind;
+					dvar->isarg = pvar.isarg;
+					r_list_append (pvars, dvar);
+				}
 			}
 			if (resolved) {
 				rprj_var_load (cur, fcn, &pvar, mode, va);
 			}
 		}
+		if ((mode & MODE_DIFF) && resolved) {
+			if (!fcn) {
+				r_cons_printf (core->cons, "'af- 0x%08"PFMT64x"\n", va);
+			} else {
+				if (name && strcmp (r_str_get (name), r_str_get (fcn->name))) {
+					r_cons_printf (core->cons, "'afn %s 0x%08"PFMT64x"\n", fcn->name, va);
+				}
+				rprj_diff_function_attrs (cur, fcn, pfcn.attr < nattrs? attrs + pfcn.attr: NULL);
+				rprj_diff_function_blocks (cur, fcn, pbbs);
+				rprj_diff_function_vars (cur, fcn, pvars);
+			}
+		}
+		r_list_free (pvars);
+		r_list_free (pbbs);
 	}
+	if (mode & MODE_DIFF) {
+		RListIter *iter;
+		RAnalFunction *fcn;
+		RList *fcns = r_anal_get_fcns (core->anal);
+		r_list_foreach (fcns, iter, fcn) {
+			if (fcn && !rprj_diff_has_function (pfcns, fcn->addr)) {
+				rprj_print_function_script (cur, fcn);
+			}
+		}
+	}
+	r_list_free (pfcns);
 	free (attrs);
 	free (colors);
 }
@@ -1767,12 +2230,23 @@ static void prj_load(RCore *core, const char *file, int mode) {
 					//r_cons_printf (core->cons, "      Date: %s\n", r_time_usecs_tostring (cmds.time));
 					r_cons_printf (core->cons, "    }\n");
 				}
+				if (mode & MODE_DIFF) {
+					const char *cur_name = r_config_get (core->config, "prj.name");
+					const char *cur_user = r_config_get (core->config, "cfg.user");
+					if (strcmp (r_str_get (cur_name), r_str_get (name))) {
+						r_cons_printf (core->cons, "'e prj.name=%s\n", r_str_get (cur_name));
+					}
+					if (strcmp (r_str_get (cur_user), r_str_get (user))) {
+						r_cons_printf (core->cons, "'e cfg.user=%s\n", r_str_get (cur_user));
+					}
+				}
 			}
 			break;
 		case RPRJ_CMNT:
 			{
 				ut64 at = r_buf_at (b);
 				ut64 last = at + entry.size - sizeof (R2ProjectEntry);
+				RList *seen = (mode & MODE_DIFF)? r_list_newf (free): NULL;
 				while (at + sizeof (R2ProjectComment) <= last) {
 					R2ProjectComment cmnt;
 					rprj_cmnt_read (b, &cmnt);
@@ -1800,11 +2274,29 @@ static void prj_load(RCore *core, const char *file, int mode) {
 							free (cmd);
 							free (b64);
 						}
+						if (mode & MODE_DIFF) {
+							rprj_diff_seen_addr (seen, va);
+							const char *current = r_meta_get_string (core->anal, R_META_TYPE_COMMENT, va);
+							if (strcmp (r_str_get (current), cmnt_text)) {
+								rprj_print_comment_script (&cur, va, current);
+							}
+						}
 					} else {
 						R_LOG_WARN ("Cannot resolve address for comment %s", cmnt_text);
 					}
 					at += sizeof (cmnt);
 				}
+				if (mode & MODE_DIFF) {
+					RIntervalTreeIter it;
+					RAnalMetaItem *item;
+					r_interval_tree_foreach (&core->anal->meta, it, item) {
+						RIntervalNode *node = r_interval_tree_iter_get (&it);
+						if (item->type == R_META_TYPE_COMMENT && !rprj_diff_has_addr (seen, node->start)) {
+							rprj_print_comment_script (&cur, node->start, item->str);
+						}
+					}
+				}
+				r_list_free (seen);
 			}
 			break;
 		case RPRJ_FLAG:
@@ -1823,6 +2315,7 @@ static void prj_load(RCore *core, const char *file, int mode) {
 				if (count > bmax) {
 					count = (ut32)bmax;
 				}
+				RList *seen = (mode & MODE_DIFF)? r_list_newf (free): NULL;
 				ut32 i;
 				for (i = 0; i < count; i++) {
 					R2ProjectXref xref;
@@ -1841,10 +2334,47 @@ static void prj_load(RCore *core, const char *file, int mode) {
 						r_cons_printf (core->cons, "'ax%c 0x%08"PFMT64x" 0x%08"PFMT64x"\n",
 							(char)R_ANAL_REF_TYPE_MASK (xref.type), to, from);
 					}
+					if (mode & MODE_DIFF) {
+						R2ProjectDiffXref *dx = R_NEW (R2ProjectDiffXref);
+						dx->from = from;
+						dx->to = to;
+						dx->type = xref.type;
+						r_list_append (seen, dx);
+						RVecAnalRef *refs = r_anal_refs_get (core->anal, from);
+						bool found = false;
+						if (refs) {
+							RAnalRef *ref;
+							R_VEC_FOREACH (refs, ref) {
+								if (ref->at == from && ref->addr == to
+										&& R_ANAL_REF_TYPE_MASK (ref->type) == R_ANAL_REF_TYPE_MASK (xref.type)) {
+									found = true;
+									break;
+								}
+							}
+							RVecAnalRef_free (refs);
+						}
+						if (!found) {
+							r_cons_printf (core->cons, "'ax- 0x%08"PFMT64x" 0x%08"PFMT64x"\n", to, from);
+						}
+					}
 					if (mode & MODE_LOAD) {
 						r_anal_xrefs_set (core->anal, from, to, xref.type);
 					}
 				}
+				if (mode & MODE_DIFF) {
+					RVecAnalRef *refs = r_anal_refs_get (core->anal, UT64_MAX);
+					if (refs) {
+						RAnalRef *ref;
+						R_VEC_FOREACH (refs, ref) {
+							R2ProjectDiffXref *dx = rprj_diff_xref_find (seen, ref->at, ref->addr, ref->type);
+							if (!dx) {
+								rprj_print_xref_script (&cur, ref);
+							}
+						}
+						RVecAnalRef_free (refs);
+					}
+				}
+				r_list_free (seen);
 			}
 			break;
 		case RPRJ_FUNC:
@@ -1854,6 +2384,7 @@ static void prj_load(RCore *core, const char *file, int mode) {
 			{
 				ut64 at = r_buf_at (b);
 				ut64 last = at + entry.size - sizeof (R2ProjectEntry);
+				RList *seen = (mode & MODE_DIFF)? r_list_newf (free): NULL;
 				while (at + sizeof (R2ProjectHint) <= last) {
 					R2ProjectHint hint;
 					rprj_hint_read (b, &hint);
@@ -1872,6 +2403,18 @@ static void prj_load(RCore *core, const char *file, int mode) {
 						if (mode & MODE_SCRIPT) {
 							eprintf ("'ahi %d @ 0x%08"PFMT64x"\n", base, va);
 						}
+						if (mode & MODE_DIFF) {
+							rprj_diff_seen_addr (seen, (va << 8) | R_ANAL_ADDR_HINT_TYPE_IMMBASE);
+							int curval = 0;
+							if (!rprj_current_hint_value (core->anal, va, R_ANAL_ADDR_HINT_TYPE_IMMBASE, &curval)
+									|| curval != base) {
+								if (curval) {
+									r_cons_printf (core->cons, "'ahi %d @ 0x%08"PFMT64x"\n", curval, va);
+								} else {
+									r_cons_printf (core->cons, "'ah- @ 0x%08"PFMT64x"\n", va);
+								}
+							}
+						}
 						if (mode & MODE_LOAD) {
 							r_anal_hint_set_immbase (core->anal, va, base);
 						}
@@ -1880,12 +2423,29 @@ static void prj_load(RCore *core, const char *file, int mode) {
 						if (mode & MODE_SCRIPT) {
 							eprintf ("'ahb %d @ 0x%08"PFMT64x"\n", nbits, va);
 						}
+						if (mode & MODE_DIFF) {
+							rprj_diff_seen_addr (seen, (va << 8) | R_ANAL_ADDR_HINT_TYPE_NEW_BITS);
+							int curval = 0;
+							if (!rprj_current_hint_value (core->anal, va, R_ANAL_ADDR_HINT_TYPE_NEW_BITS, &curval)
+									|| curval != nbits) {
+								if (curval) {
+									r_cons_printf (core->cons, "'ahb %d @ 0x%08"PFMT64x"\n", curval, va);
+								} else {
+									r_cons_printf (core->cons, "'ah- @ 0x%08"PFMT64x"\n", va);
+								}
+							}
+						}
 						if (mode & MODE_LOAD) {
 							r_anal_hint_set_newbits (core->anal, va, nbits);
 						}
 					}
 					at += sizeof (hint);
 				}
+				if (mode & MODE_DIFF) {
+					R2ProjectDiffCtx ctx = { &cur, seen };
+					r_anal_addr_hints_foreach (core->anal, rprj_diff_hints_cb, &ctx);
+				}
+				r_list_free (seen);
 			}
 			break;
 		}
@@ -1944,6 +2504,8 @@ static void prjcmd(RCore *core, const char *mod, const char *arg) {
 				prj_load (core, arg2, MODE_SCRIPT);
 			} else if (!strcmp (argstr, "info")) {
 				prj_load (core, arg2, MODE_LOG);
+			} else if (!strcmp (argstr, "diff")) {
+				prj_load (core, arg2, MODE_DIFF);
 			}
 		} else {
 			prjhelp ();
@@ -1983,7 +2545,7 @@ static bool plugin_init(RCorePluginSession *cps) {
 	if (!root) {
 		return true;
 	}
-	const char *subs[] = { "save", "load", "open", "info", "r2", NULL };
+	const char *subs[] = { "save", "load", "open", "info", "diff", "r2", NULL };
 	int i;
 	for (i = 0; subs[i]; i++) {
 		r_core_autocomplete_add (root, subs[i], R_CORE_AUTOCMPLT_FILE, true);

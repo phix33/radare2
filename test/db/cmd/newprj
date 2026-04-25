@@ -498,3 +498,64 @@ callconv: arm64
 var char local_b @ x29-0x8
 EOF
 RUN
+
+NAME=newprj diff covers non-function project data
+FILE=malloc://0x100
+CMDS=<<EOF
+mkdir .tmp
+rm -f .tmp/newprj-diffall.prj
+e asm.syntax=att
+f saved.flag=0x10
+CC saved @ 0x20
+ahi 10 @ 0x20
+axd 0x30 0x20
+prj save .tmp/newprj-diffall.prj > /dev/null
+e asm.syntax=intel
+f- saved.flag
+f live.flag=0x11
+CC- @ 0x20
+CC live @ 0x20
+ahi 16 @ 0x20
+ax-*
+axc 0x31 0x20
+prj diff .tmp/newprj-diffall.prj~asm.syntax,saved.flag,live.flag,CCu,ahi,ax-,axc
+rm .tmp/newprj-diffall.prj
+EOF
+EXPECT=<<EOF
+'e asm.syntax=intel
+'f- saved.flag
+'f live.flag 1 0x00000011
+'@0x00000020'CCu base64:bGl2ZQ==
+'ahi 16 @ 0x00000020
+'ax- 0x00000030 0x00000020
+'axc 0x00000031 0x00000020
+EOF
+RUN
+
+NAME=newprj diff covers function blocks colors and vars
+FILE=malloc://0x100
+CMDS=<<EOF
+mkdir .tmp
+rm -f .tmp/newprj-difffcn.prj
+e asm.arch=arm
+af+ 0x40 saved.fcn
+afb+ 0x40 0x40 4
+afbc rgb:ff0000 @ 0x40
+s 0x40
+afvb -4 saved_var int
+prj save .tmp/newprj-difffcn.prj > /dev/null
+afn live.fcn 0x40
+afb+ 0x40 0x44 4
+afbc rgb:0000ff @ 0x40
+s 0x40
+afvn live_var saved_var
+prj diff .tmp/newprj-difffcn.prj~afn,afb+,afbc,afvb
+rm .tmp/newprj-difffcn.prj
+EOF
+EXPECT=<<EOF
+'afn live.fcn 0x00000040
+'afbc rgb:0000ff 0x00000040
+'afb+ 0x00000040 0x00000044 4 0xffffffffffffffff 0xffffffffffffffff
+'afvb -4 live_var int @ 0x00000040
+EOF
+RUN
