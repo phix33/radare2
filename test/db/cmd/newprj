@@ -264,3 +264,111 @@ second
 0x00008010 -> 0x0000c010  DATA:r--
 EOF
 RUN
+
+NAME=newprj xref types round-trip
+FILE=malloc://0x1000
+CMDS=<<EOF
+mkdir .tmp
+rm -f .tmp/newprj-xreftypes.prj
+axc 0x80 0x10
+axd 0x90 0x20
+axC 0xa0 0x30
+prj save .tmp/newprj-xreftypes.prj > /dev/null
+ax-*
+prj load .tmp/newprj-xreftypes.prj > /dev/null
+axq
+rm .tmp/newprj-xreftypes.prj
+EOF
+EXPECT=<<EOF
+0x00000010 -> 0x00000080  CODE:--x
+0x00000020 -> 0x00000090  DATA:r--
+0x00000030 -> 0x000000a0  CALL:--x
+EOF
+RUN
+
+NAME=newprj rebased xrefs keep source and target modules
+FILE=malloc://0x10
+CMDS=<<EOF
+mkdir .tmp
+rm -f .tmp/newprj-xrefmods.prj
+!printf AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA > .tmp/newprj-xma.bin
+!printf BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB > .tmp/newprj-xmb.bin
+o .tmp/newprj-xma.bin 0x1000
+o .tmp/newprj-xmb.bin 0x4000
+axc 0x4010 0x1010
+axd 0x1020 0x4020
+prj save .tmp/newprj-xrefmods.prj > /dev/null
+ax-*
+o--
+o .tmp/newprj-xma.bin 0x8000
+o .tmp/newprj-xmb.bin 0xc000
+prj load .tmp/newprj-xrefmods.prj > /dev/null
+axq
+rm .tmp/newprj-xrefmods.prj
+rm .tmp/newprj-xma.bin
+rm .tmp/newprj-xmb.bin
+EOF
+EXPECT=<<EOF
+0x00008010 -> 0x0000c010  CODE:--x
+0x0000c020 -> 0x00008020  DATA:r--
+EOF
+RUN
+
+NAME=newprj function name updates existing function
+FILE=malloc://0x100
+CMDS=<<EOF
+mkdir .tmp
+rm -f .tmp/newprj-fcnname.prj
+af+ 0x10 fcn.saved
+prj save .tmp/newprj-fcnname.prj > /dev/null
+afn fcn.old 0x10
+prj load .tmp/newprj-fcnname.prj > /dev/null
+afl
+rm .tmp/newprj-fcnname.prj
+EOF
+EXPECT=<<EOF
+0x00000010    0      0 fcn.saved
+EOF
+RUN
+
+NAME=newprj rebased functions blocks colors and xrefs
+FILE=malloc://0x10
+CMDS=<<EOF
+mkdir .tmp
+rm -f .tmp/newprj-fcnmods.prj
+!printf AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA > .tmp/newprj-fma.bin
+!printf BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB > .tmp/newprj-fmb.bin
+o .tmp/newprj-fma.bin 0x1000
+o .tmp/newprj-fmb.bin 0x4000
+e asm.arch=arm
+af+ 0x1010 fcn.mod
+afb+ 0x1010 0x1010 8 0x1018 0xffffffffffffffff
+afb+ 0x1010 0x1018 4 0xffffffffffffffff 0xffffffffffffffff
+afbc rgb:ff0000 @ 0x1010
+afbc rgb:0000ff @ 0x1018
+axC 0x4010 0x1010
+prj save .tmp/newprj-fcnmods.prj > /dev/null
+af-*
+ax-*
+o--
+o .tmp/newprj-fma.bin 0x8000
+o .tmp/newprj-fmb.bin 0xc000
+prj load .tmp/newprj-fcnmods.prj > /dev/null
+afl
+afb @ 0x8010
+afbc @ 0x8010~red
+afbc @ 0x8018~blue
+axq
+rm .tmp/newprj-fcnmods.prj
+rm .tmp/newprj-fma.bin
+rm .tmp/newprj-fmb.bin
+EOF
+EXPECT=<<EOF
+0x00008010    2     12 fcn.mod
+0x00008010 0x00008018 00:0000 8 j 0x00008018
+0x00008018 0x0000801c 00:0000 4
+red
+blue
+0x00008010 -> 0x0000c010  CALL:--x
+EOF
+RUN
