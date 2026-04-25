@@ -23,7 +23,7 @@ static void rprj_flag_write_one(RPrjCursor *cur, RFlagItem *fi) {
 			&& (!rn || strcmp (fi->rawname, rn)))? fi->rawname: NULL;
 	// Reserve head, emit tail (accumulating extras), patch head.
 	ut64 head_at = r_buf_at (cur->b);
-	ut8 head[21] = {0};
+		ut8 head[RPRJ_FLAG_SIZE] = {0};
 	r_buf_write (cur->b, head, sizeof (head));
 	ut8 extras = fi->demangled? RPRJ_FLAG_DEMANGLED: 0;
 	if (space_idx != UT32_MAX) {

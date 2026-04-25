@@ -232,6 +232,28 @@ src comment
 EOF
 RUN
 
+NAME=newprj rebase flag at module end
+FILE=malloc://0x10
+CMDS=<<EOF
+mkdir .tmp
+rm -f .tmp/newprj-endbyte.prj
+!printf AAAAAAAAAAAAAAAA > .tmp/newprj-end.bin
+o .tmp/newprj-end.bin 0x1000
+f end.byte=0x100f
+prj save .tmp/newprj-endbyte.prj > /dev/null
+f-*
+o--
+o .tmp/newprj-end.bin 0x8000
+prj load .tmp/newprj-endbyte.prj > /dev/null
+fd 0x800f
+rm .tmp/newprj-endbyte.prj
+rm .tmp/newprj-end.bin
+EOF
+EXPECT=<<EOF
+end.byte
+EOF
+RUN
+
 NAME=newprj rebase multiple file-backed modules
 FILE=malloc://0x10
 CMDS=<<EOF
@@ -423,6 +445,26 @@ EXPECT=<<EOF
 arg int reg_arg @ x0
 arg long sp_arg @ sp+0x8
 var char local_name @ x29-0x4
+EOF
+RUN
+
+NAME=newprj script register variables
+FILE=malloc://0x100
+CMDS=<<EOF
+mkdir .tmp
+rm -f .tmp/newprj-regscript.prj
+e asm.arch=arm
+af+ 0x10 fcn.regscript
+afb+ 0x10 0x10 8
+s 0x10
+afc arm64
+afvr x0 reg_arg int
+prj save .tmp/newprj-regscript.prj > /dev/null
+prj r2 .tmp/newprj-regscript.prj~afvr
+rm .tmp/newprj-regscript.prj
+EOF
+EXPECT=<<EOF
+'afvr x0 reg_arg int @ 0x00000010
 EOF
 RUN
 

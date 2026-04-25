@@ -4,22 +4,33 @@
 
 #include "newprj.h"
 
-static void rprj_eval_load(RPrjCursor *cur, int mode) {
+static ut64 rprj_entry_remaining(RBuffer *b, ut64 next_entry) {
+	const ut64 at = r_buf_at (b);
+	return next_entry > at? next_entry - at: 0;
+}
+
+static bool rprj_entry_has(RBuffer *b, ut64 next_entry, ut64 len) {
+	return rprj_entry_remaining (b, next_entry) >= len;
+}
+
+static void rprj_eval_load(RPrjCursor *cur, int mode, ut64 next_entry) {
 	RBuffer *b = cur->b;
 	RCore *core = cur->core;
 	R2ProjectStringTable *st = cur->st;
 	ut32 count = 0;
-	if (!rprj_read_le32 (b, &count)) {
+	if (!rprj_entry_has (b, next_entry, sizeof (count)) || !rprj_read_le32 (b, &count)) {
+		R_LOG_WARN ("Truncated eval entry");
 		return;
 	}
-	const ut64 bmax = (r_buf_size (b) - r_buf_at (b)) / 8;
+	const ut64 bmax = rprj_entry_remaining (b, next_entry) / 8;
 	if (count > bmax) {
+		R_LOG_WARN ("Invalid eval record count %u", count);
 		count = (ut32)bmax;
 	}
 	ut32 i;
 	for (i = 0; i < count; i++) {
 		ut32 k, v;
-		if (!rprj_read_le32 (b, &k) || !rprj_read_le32 (b, &v)) {
+		if (!rprj_entry_has (b, next_entry, 8) || !rprj_read_le32 (b, &k) || !rprj_read_le32 (b, &v)) {
 			R_LOG_WARN ("Truncated eval record %u/%u", i, count);
 			break;
 		}
@@ -49,7 +60,7 @@ static void rprj_eval_load(RPrjCursor *cur, int mode) {
 
 static ut8 *rprj_find(RBuffer *b, ut32 type, ut32 *size) {
 	r_buf_seek (b, sizeof (R2ProjectHeader), SEEK_SET);
-	ut64 last = r_buf_size (b);
+	const ut64 last = r_buf_size (b);
 	ut64 at = r_buf_at (b);
 	*size = 0;
 	while (r_buf_at (b) < last) {
@@ -58,16 +69,19 @@ static ut8 *rprj_find(RBuffer *b, ut32 type, ut32 *size) {
 			R_LOG_ERROR ("find: Cannot read entry");
 			break;
 		}
-		if (entry.size < sizeof (R2ProjectEntry) || entry.size > ST32_MAX) {
+		if (entry.size < sizeof (R2ProjectEntry) || entry.size > last - at) {
 			R_LOG_ERROR ("invalid size");
 			break;
 		}
 		if (entry.type == type) {
 			const ut32 data_size = entry.size - sizeof (R2ProjectEntry);
-			ut8 *buf = malloc (data_size);
+			ut8 *buf = data_size? malloc (data_size): R_NEWS0 (ut8, 1);
 			if (buf) {
+				if (data_size && r_buf_read_at (b, at + sizeof (R2ProjectEntry), buf, data_size) != (st64)data_size) {
+					free (buf);
+					return NULL;
+				}
 				*size = data_size;
-				r_buf_read_at (b, at + sizeof (R2ProjectEntry), buf, data_size);
 				return buf;
 			}
 			return NULL;
@@ -78,33 +92,39 @@ static ut8 *rprj_find(RBuffer *b, ut32 type, ut32 *size) {
 	return NULL;
 }
 
-static RPrjFlagExtras read_flag_extras(RPrjCursor *cur, ut8 extras) {
-	RPrjFlagExtras fe = {0};
+static bool read_flag_extra_str(RPrjCursor *cur, ut64 next_entry, const char **out) {
 	RBuffer *b = cur->b;
-	R2ProjectStringTable *st = cur->st;
 	ut32 idx;
-	if ((extras & RPRJ_FLAG_SPACE) && rprj_read_le32 (b, &idx)) {
-		fe.space = rprj_st_get (st, idx);
+	if (!rprj_entry_has (b, next_entry, sizeof (idx)) || !rprj_read_le32 (b, &idx)) {
+		return false;
 	}
-	if ((extras & RPRJ_FLAG_REALNAME) && rprj_read_le32 (b, &idx)) {
-		fe.realname = rprj_st_get (st, idx);
+	*out = rprj_st_get (cur->st, idx);
+	return *out != NULL;
+}
+
+static bool read_flag_extras(RPrjCursor *cur, ut8 extras, ut64 next_entry, RPrjFlagExtras *fe) {
+	if ((extras & RPRJ_FLAG_SPACE) && !read_flag_extra_str (cur, next_entry, &fe->space)) {
+		return false;
 	}
-	if ((extras & RPRJ_FLAG_RAWNAME) && rprj_read_le32 (b, &idx)) {
-		fe.rawname = rprj_st_get (st, idx);
+	if ((extras & RPRJ_FLAG_REALNAME) && !read_flag_extra_str (cur, next_entry, &fe->realname)) {
+		return false;
 	}
-	if ((extras & RPRJ_FLAG_TYPE) && rprj_read_le32 (b, &idx)) {
-		fe.type = rprj_st_get (st, idx);
+	if ((extras & RPRJ_FLAG_RAWNAME) && !read_flag_extra_str (cur, next_entry, &fe->rawname)) {
+		return false;
 	}
-	if ((extras & RPRJ_FLAG_COLOR) && rprj_read_le32 (b, &idx)) {
-		fe.color = rprj_st_get (st, idx);
+	if ((extras & RPRJ_FLAG_TYPE) && !read_flag_extra_str (cur, next_entry, &fe->type)) {
+		return false;
 	}
-	if ((extras & RPRJ_FLAG_COMMENT) && rprj_read_le32 (b, &idx)) {
-		fe.comment = rprj_st_get (st, idx);
+	if ((extras & RPRJ_FLAG_COLOR) && !read_flag_extra_str (cur, next_entry, &fe->color)) {
+		return false;
 	}
-	if ((extras & RPRJ_FLAG_ALIAS) && rprj_read_le32 (b, &idx)) {
-		fe.alias = rprj_st_get (st, idx);
+	if ((extras & RPRJ_FLAG_COMMENT) && !read_flag_extra_str (cur, next_entry, &fe->comment)) {
+		return false;
 	}
-	return fe;
+	if ((extras & RPRJ_FLAG_ALIAS) && !read_flag_extra_str (cur, next_entry, &fe->alias)) {
+		return false;
+	}
+	return true;
 }
 
 static void rprj_diff_seen_addr(RList *seen, ut64 addr);
@@ -112,27 +132,37 @@ static void rprj_print_flag_script(RPrjCursor *cur, RFlagItem *fi);
 static bool rprj_flag_differs(RFlag *flags, RFlagItem *fi, ut64 addr, ut64 size, RPrjFlagExtras *fe, ut8 extras);
 static bool rprj_diff_flag_foreach_cb(RFlagItem *fi, void *user);
 
-static void rprj_flag_load(RPrjCursor *cur, int mode) {
+static void rprj_flag_load(RPrjCursor *cur, int mode, ut64 next_entry) {
 	RCore *core = cur->core;
 	RBuffer *b = cur->b;
 	R2ProjectStringTable *st = cur->st;
 	ut32 fcount = 0;
-	if (!rprj_read_le32 (b, &fcount)) {
+	if (!rprj_entry_has (b, next_entry, sizeof (fcount)) || !rprj_read_le32 (b, &fcount)) {
+		R_LOG_WARN ("Truncated flag entry");
 		return;
 	}
-	const ut64 bmax = (r_buf_size (b) - r_buf_at (b)) / 21;
+	const ut64 bmax = rprj_entry_remaining (b, next_entry) / RPRJ_FLAG_SIZE;
 	if (fcount > bmax) {
+		R_LOG_WARN ("Invalid flag record count %u", fcount);
 		fcount = (ut32)bmax;
 	}
 	RList *seen = (mode & R_CORE_NEWPRJ_MODE_DIFF)? r_list_newf (free): NULL;
 	ut32 i;
 	for (i = 0; i < fcount; i++) {
+		if (!rprj_entry_has (b, next_entry, RPRJ_FLAG_SIZE)) {
+			R_LOG_WARN ("Truncated flag record %u/%u", i, fcount);
+			break;
+		}
 		R2ProjectFlag flag;
 		if (!rprj_flag_read (b, &flag)) {
 			R_LOG_WARN ("Truncated flag record %u/%u", i, fcount);
 			break;
 		}
-		RPrjFlagExtras fe = read_flag_extras (cur, flag.extras);
+		RPrjFlagExtras fe = {0};
+		if (!read_flag_extras (cur, flag.extras, next_entry, &fe)) {
+			R_LOG_WARN ("Truncated or invalid flag extras %u/%u", i, fcount);
+			break;
+		}
 		const char *flag_name = rprj_st_get (st, flag.name);
 		if (!flag_name) {
 			R_LOG_WARN ("Invalid flag string index %u", flag.name);
@@ -338,7 +368,6 @@ static void rprj_var_load(RPrjCursor *cur, RAnalFunction *fcn, R2ProjectVar *pva
 				if (reg) {
 					r_cons_printf (cur->core->cons, "'afvr %s %s %s @ 0x%08"PFMT64x"\n",
 						reg->name, name, typ, fcn_addr);
-					r_unref (reg);
 				}
 			}
 			break;
@@ -693,7 +722,8 @@ static void rprj_function_load(RPrjCursor *cur, int mode, ut64 next_entry) {
 	R2ProjectStringTable *st = cur->st;
 	ut32 count = 0;
 	ut32 ncolors = 0;
-	if (!rprj_read_le32 (b, &ncolors)) {
+	if (!rprj_entry_has (b, next_entry, sizeof (ncolors)) || !rprj_read_le32 (b, &ncolors)) {
+		R_LOG_WARN ("Truncated function entry");
 		return;
 	}
 	const ut64 remaining = next_entry > r_buf_at (b)? next_entry - r_buf_at (b): 0;
@@ -717,7 +747,8 @@ static void rprj_function_load(RPrjCursor *cur, int mode, ut64 next_entry) {
 		}
 	}
 	ut32 nattrs = 0;
-	if (!rprj_read_le32 (b, &nattrs)) {
+	if (!rprj_entry_has (b, next_entry, sizeof (nattrs)) || !rprj_read_le32 (b, &nattrs)) {
+		R_LOG_WARN ("Truncated function attribute table");
 		free (colors);
 		return;
 	}
@@ -744,7 +775,8 @@ static void rprj_function_load(RPrjCursor *cur, int mode, ut64 next_entry) {
 			}
 		}
 	}
-	if (!rprj_read_le32 (b, &count)) {
+	if (!rprj_entry_has (b, next_entry, sizeof (count)) || !rprj_read_le32 (b, &count)) {
+		R_LOG_WARN ("Truncated function count");
 		free (attrs);
 		free (colors);
 		return;
@@ -753,6 +785,10 @@ static void rprj_function_load(RPrjCursor *cur, int mode, ut64 next_entry) {
 	ut32 i;
 	for (i = 0; i < count && r_buf_at (b) < next_entry; i++) {
 		R2ProjectFunction pfcn;
+		if (!rprj_entry_has (b, next_entry, RPRJ_FUNCTION_SIZE)) {
+			R_LOG_WARN ("Truncated function record %u/%u", i, count);
+			break;
+		}
 		if (!rprj_function_read (b, &pfcn)) {
 			R_LOG_WARN ("Truncated function record %u/%u", i, count);
 			break;
@@ -798,6 +834,15 @@ static void rprj_function_load(RPrjCursor *cur, int mode, ut64 next_entry) {
 		ut32 j;
 		for (j = 0; j < pfcn.nbbs && r_buf_at (b) < next_entry; j++) {
 			R2ProjectBlock pbb;
+			if (!rprj_entry_has (b, next_entry, RPRJ_BLOCK_SIZE)) {
+				R_LOG_WARN ("Truncated basic block record %u/%u in function %u/%u", j, pfcn.nbbs, i, count);
+				r_list_free (pvars);
+				r_list_free (pbbs);
+				r_list_free (pfcns);
+				free (attrs);
+				free (colors);
+				return;
+			}
 			if (!rprj_block_read (b, &pbb)) {
 				R_LOG_WARN ("Truncated basic block record %u/%u in function %u/%u", j, pfcn.nbbs, i, count);
 				r_list_free (pvars);
@@ -825,6 +870,15 @@ static void rprj_function_load(RPrjCursor *cur, int mode, ut64 next_entry) {
 		}
 		for (j = 0; j < pfcn.nvars && r_buf_at (b) < next_entry; j++) {
 			R2ProjectVar pvar;
+			if (!rprj_entry_has (b, next_entry, RPRJ_VAR_SIZE)) {
+				R_LOG_WARN ("Truncated variable record %u/%u in function %u/%u", j, pfcn.nvars, i, count);
+				r_list_free (pvars);
+				r_list_free (pbbs);
+				r_list_free (pfcns);
+				free (attrs);
+				free (colors);
+				return;
+			}
 			if (!rprj_var_read (b, &pvar)) {
 				R_LOG_WARN ("Truncated variable record %u/%u in function %u/%u", j, pfcn.nvars, i, count);
 				r_list_free (pvars);
@@ -918,6 +972,13 @@ static void r_core_newprj_load(RCore *core, const char *file, int mode) {
 		r_unref (b);
 		return;
 	}
+	if (!rprj_st_is_valid (&st)) {
+		R_LOG_ERROR ("Invalid string table (RPRJ_STRS) in project file");
+		r_list_free (cur.mods);
+		free (st.data);
+		r_unref (b);
+		return;
+	}
 	r_buf_seek (b, sizeof (R2ProjectHeader), SEEK_SET);
 
 	ut32 modsize = 0;
@@ -948,15 +1009,15 @@ static void r_core_newprj_load(RCore *core, const char *file, int mode) {
 
 	R2ProjectEntry entry;
 	r_buf_seek (b, sizeof (R2ProjectHeader), SEEK_SET);
-	ut64 next_entry = r_buf_at (b);
 	int n = 0;
 	const ut64 bsz = r_buf_size (b);
 	while (r_buf_at (b) < bsz) {
+		const ut64 entry_at = r_buf_at (b);
 		if (!rprj_entry_read (b, &entry)) {
 			R_LOG_ERROR ("Cannot read entry");
 			break;
 		}
-		if (entry.size < sizeof (R2ProjectEntry) || r_buf_at (b) + entry.size - sizeof (R2ProjectEntry) > bsz) {
+		if (entry.size < sizeof (R2ProjectEntry) || entry.size > bsz - entry_at) {
 			R_LOG_ERROR ("Invalid entry size %u", entry.size);
 			break;
 		}
@@ -968,26 +1029,29 @@ static void r_core_newprj_load(RCore *core, const char *file, int mode) {
 		if (mode & R_CORE_NEWPRJ_MODE_SCRIPT) {
 			r_cons_printf (core->cons, "'f entry%d.%s=0x%08"PFMT64x"\n", n, rprj_entry_type_tostring (entry.type), r_buf_at (b));
 		}
-		next_entry += entry.size;
+		const ut64 next_entry = entry_at + entry.size;
 		switch (entry.type) {
 		case RPRJ_STRS:
 			{
-				// string table
-				const char *data = (const char *)r_buf_data (b, NULL);
-				int i;
-				int p = r_buf_at (b);
-				// for (i = sizeof (R2ProjectEntry); i < entry.size; i++)
 				if (mode & R_CORE_NEWPRJ_MODE_LOG) {
-					r_cons_printf (core->cons, "      => (%d) ", (int)strlen (data + p));
-					for (i = 0; i < entry.size - sizeof (R2ProjectEntry); i++) {
-						const char ch = data[p + i];
-						if (ch == 0) {
-							r_cons_printf (core->cons, "\n      => (%d) ", (int)strlen (data + i + p + 1));
+					ut64 size;
+					const ut8 *bdata = r_buf_data (b, &size);
+					const ut64 at = r_buf_at (b);
+					const ut32 data_size = entry.size - sizeof (R2ProjectEntry);
+					if (bdata && at + data_size <= size) {
+						const ut8 *data = bdata + at;
+						ut32 i = 0;
+						while (i < data_size) {
+							const ut8 *nul = memchr (data + i, 0, data_size - i);
+							if (!nul) {
+								break;
+							}
+							const ut32 len = (ut32)(nul - (data + i));
+							r_cons_printf (core->cons, "      => (%u) %s\n", len, (const char *)data + i);
+							i += len + 1;
 						}
-						r_cons_printf (core->cons, "%c", ch);
 					}
 				}
-				r_cons_printf (core->cons, "\n");
 				break;
 			}
 		case RPRJ_MODS: // modules
@@ -1005,7 +1069,7 @@ static void r_core_newprj_load(RCore *core, const char *file, int mode) {
 			while (r_buf_at (b) < next_entry) {
 				// this entry requires disabled sandbox
 				char *script;
-				if (!rprj_string_read (b, &script)) {
+				if (!rprj_string_read (b, next_entry, &script)) {
 					R_LOG_ERROR ("Cannot read string");
 					break;
 				}
@@ -1024,9 +1088,20 @@ static void r_core_newprj_load(RCore *core, const char *file, int mode) {
 		case RPRJ_INFO:
 			{
 				R2ProjectInfo cmds = {0};
-				rprj_info_read (b, &cmds);
+				if (!rprj_entry_has (b, next_entry, sizeof (R2ProjectInfo))) {
+					R_LOG_WARN ("Truncated project info entry");
+					break;
+				}
+				if (!rprj_info_read (b, &cmds)) {
+					R_LOG_WARN ("Truncated project info entry");
+					break;
+				}
 				const char *name = rprj_st_get (&st, cmds.name);
 				const char *user = rprj_st_get (&st, cmds.user);
+				if (!name || !user) {
+					R_LOG_WARN ("Invalid project info string index (%u,%u)", cmds.name, cmds.user);
+					break;
+				}
 				if (mode & R_CORE_NEWPRJ_MODE_LOG) {
 					r_cons_printf (core->cons, "    ProjectInfo {\n");
 					r_cons_printf (core->cons, "      Name: %s\n", name);
@@ -1053,7 +1128,10 @@ static void r_core_newprj_load(RCore *core, const char *file, int mode) {
 				RList *seen = (mode & R_CORE_NEWPRJ_MODE_DIFF)? r_list_newf (free): NULL;
 				while (at + sizeof (R2ProjectComment) <= last) {
 					R2ProjectComment cmnt;
-					rprj_cmnt_read (b, &cmnt);
+					if (!rprj_cmnt_read (b, &cmnt)) {
+						R_LOG_WARN ("Truncated comment record at 0x%08"PFMT64x, at);
+						break;
+					}
 					const char *cmnt_text = rprj_st_get (&st, cmnt.text);
 					if (!cmnt_text) {
 						R_LOG_WARN ("Invalid comment string index %u", cmnt.text);
@@ -1104,26 +1182,28 @@ static void r_core_newprj_load(RCore *core, const char *file, int mode) {
 			}
 			break;
 		case RPRJ_FLAG:
-			rprj_flag_load (&cur, mode);
+			rprj_flag_load (&cur, mode, next_entry);
 			break;
 		case RPRJ_EVAL:
-			rprj_eval_load (&cur, mode);
+			rprj_eval_load (&cur, mode, next_entry);
 			break;
 		case RPRJ_XREF:
 			{
 				ut32 count = 0;
-				if (!rprj_read_le32 (b, &count)) {
+				if (!rprj_entry_has (b, next_entry, sizeof (count)) || !rprj_read_le32 (b, &count)) {
+					R_LOG_WARN ("Truncated xref entry");
 					break;
 				}
-				const ut64 bmax = (r_buf_size (b) - r_buf_at (b)) / 28;
+				const ut64 bmax = rprj_entry_remaining (b, next_entry) / RPRJ_XREF_SIZE;
 				if (count > bmax) {
+					R_LOG_WARN ("Invalid xref record count %u", count);
 					count = (ut32)bmax;
 				}
 				RList *seen = (mode & R_CORE_NEWPRJ_MODE_DIFF)? r_list_newf (free): NULL;
 				ut32 i;
 				for (i = 0; i < count; i++) {
 					R2ProjectXref xref;
-					if (!rprj_xref_read (b, &xref)) {
+					if (!rprj_entry_has (b, next_entry, RPRJ_XREF_SIZE) || !rprj_xref_read (b, &xref)) {
 						R_LOG_WARN ("Truncated xref record %u/%u", i, count);
 						break;
 					}
@@ -1191,7 +1271,10 @@ static void r_core_newprj_load(RCore *core, const char *file, int mode) {
 				RList *seen = (mode & R_CORE_NEWPRJ_MODE_DIFF)? r_list_newf (free): NULL;
 				while (at + sizeof (R2ProjectHint) <= last) {
 					R2ProjectHint hint;
-					rprj_hint_read (b, &hint);
+					if (!rprj_hint_read (b, &hint)) {
+						R_LOG_WARN ("Truncated hint record at 0x%08"PFMT64x, at);
+						break;
+					}
 					R2ProjectAddr addr = {
 						.mod = hint.mod,
 						.delta = hint.delta,

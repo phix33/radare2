@@ -25,6 +25,7 @@ enum {
 #define RPRJ_VERSION 4
 #define RPRJ_ADDR_SIZE 12
 #define RPRJ_XREF_SIZE (RPRJ_ADDR_SIZE * 2 + 4)
+#define RPRJ_FLAG_SIZE (4 + 4 + 8 + 4 + 1)
 #define RPRJ_FUNCTION_SIZE (4 + RPRJ_ADDR_SIZE + 4 + 4 + 4)
 #define RPRJ_FUNCTION_ATTR_SIZE (4 + 4 + 4 + 4 + 8)
 #define RPRJ_COLOR_SIZE 9
@@ -209,6 +210,7 @@ typedef struct {
 
 static const char *rprj_entry_type_tostring(int type);
 static const char *rprj_st_get(R2ProjectStringTable *st, ut32 idx);
+static bool rprj_st_is_valid(R2ProjectStringTable *st);
 static void rprj_st_write(RBuffer *b, R2ProjectStringTable *st);
 static ut32 rprj_st_append(R2ProjectStringTable *st, const char *s);
 static R2ProjectMod *rprj_find_mod(RPrjCursor *cur, ut64 addr, ut32 *mid);
@@ -224,9 +226,9 @@ static bool rprj_color_eq(const RColor *a, const RColor *b);
 static void rprj_write_color(RBuffer *b, const RColor *color);
 static bool rprj_read_color(RBuffer *b, RColor *color);
 static bool rprj_read_le32(RBuffer *b, ut32 *out);
-static void rprj_cmnt_read(RBuffer *b, R2ProjectComment *cmnt);
+static bool rprj_cmnt_read(RBuffer *b, R2ProjectComment *cmnt);
 static bool rprj_flag_read(RBuffer *b, R2ProjectFlag *flag);
-static void rprj_hint_read(RBuffer *b, R2ProjectHint *hint);
+static bool rprj_hint_read(RBuffer *b, R2ProjectHint *hint);
 static bool rprj_xref_read(RBuffer *b, R2ProjectXref *xref);
 static bool rprj_function_read(RBuffer *b, R2ProjectFunction *fcn);
 static bool rprj_function_attr_read(RBuffer *b, R2ProjectFunctionAttr *attr);
@@ -237,12 +239,12 @@ static bool rprj_header_read(RBuffer *b, R2ProjectHeader *hdr);
 static bool rprj_entry_read(RBuffer *b, R2ProjectEntry *entry);
 static bool rprj_entry_begin(RBuffer *b, ut64 *at, ut32 type, ut32 version);
 static void rprj_entry_end(RBuffer *b, ut64 at);
-static bool rprj_string_read(RBuffer *b, char **s);
+static bool rprj_string_read(RBuffer *b, ut64 next_entry, char **s);
 static bool rprj_mods_read(RBuffer *b, R2ProjectMod *mod);
 static void rprj_mods_write_one(RBuffer *b, R2ProjectMod *mod);
 static void rprj_mods_write(RPrjCursor *cur);
 static RIOMap *rprj_coremod(RPrjCursor *cur, R2ProjectMod *mod);
-static void rprj_info_read(RBuffer *b, R2ProjectInfo *info);
+static bool rprj_info_read(RBuffer *b, R2ProjectInfo *info);
 
 static void r_core_newprj_save(RCore *core, const char *file);
 static void r_core_newprj_load(RCore *core, const char *file, int mode);
