@@ -372,3 +372,129 @@ blue
 0x00008010 -> 0x0000c010  CALL:--x
 EOF
 RUN
+
+NAME=newprj function metadata round-trip
+FILE=malloc://0x100
+CMDS=<<EOF
+mkdir .tmp
+rm -f .tmp/newprj-fcnmeta.prj
+e asm.arch=arm
+af+ 0x10 fcn.meta
+afb+ 0x10 0x10 8
+s 0x10
+afc arm64
+afS 32
+tn 0x10
+prj save .tmp/newprj-fcnmeta.prj > /dev/null
+af-*
+prj load .tmp/newprj-fcnmeta.prj > /dev/null
+s 0x10
+afi~stackframe,callconv,noreturn
+rm .tmp/newprj-fcnmeta.prj
+EOF
+EXPECT=<<EOF
+stackframe: 32
+callconv: arm64
+noreturn: true
+EOF
+RUN
+
+NAME=newprj function vars and args round-trip
+FILE=malloc://0x100
+CMDS=<<EOF
+mkdir .tmp
+rm -f .tmp/newprj-fcnvars.prj
+e asm.arch=arm
+af+ 0x10 fcn.vars
+afb+ 0x10 0x10 8
+s 0x10
+afc arm64
+afvr x0 reg_arg int
+afvb -4 local_name char
+afvs 8 sp_arg long
+prj save .tmp/newprj-fcnvars.prj > /dev/null
+af-*
+prj load .tmp/newprj-fcnvars.prj > /dev/null
+s 0x10
+afv
+rm .tmp/newprj-fcnvars.prj
+EOF
+EXPECT=<<EOF
+arg int reg_arg @ x0
+arg long sp_arg @ sp+0x8
+var char local_name @ x29-0x4
+EOF
+RUN
+
+NAME=newprj rebased function metadata and vars
+FILE=malloc://0x10
+CMDS=<<EOF
+mkdir .tmp
+rm -f .tmp/newprj-rfcnmeta.prj
+!printf AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA > .tmp/newprj-rfma.bin
+o .tmp/newprj-rfma.bin 0x1000
+e asm.arch=arm
+af+ 0x1010 fcn.rebase_meta
+afb+ 0x1010 0x1010 8
+s 0x1010
+afc arm64
+afS 16
+afvb -8 local_r int
+prj save .tmp/newprj-rfcnmeta.prj > /dev/null
+af-*
+o--
+o .tmp/newprj-rfma.bin 0x8000
+prj load .tmp/newprj-rfcnmeta.prj > /dev/null
+s 0x8010
+afl
+afi~stackframe,callconv
+afv
+rm .tmp/newprj-rfcnmeta.prj
+rm .tmp/newprj-rfma.bin
+EOF
+EXPECT=<<EOF
+0x00008010    1      8 fcn.rebase_meta
+stackframe: 16
+callconv: arm64
+var int local_r @ x29-0x8
+EOF
+RUN
+
+NAME=newprj shared function attrs round-trip
+FILE=malloc://0x100
+CMDS=<<EOF
+mkdir .tmp
+rm -f .tmp/newprj-fcnshared.prj
+e asm.arch=arm
+af+ 0x10 fcn.a
+afb+ 0x10 0x10 4
+s 0x10
+afc arm64
+afS 24
+afvb -4 local_a int
+af+ 0x30 fcn.b
+afb+ 0x30 0x30 4
+s 0x30
+afc arm64
+afS 24
+afvb -8 local_b char
+prj save .tmp/newprj-fcnshared.prj > /dev/null
+af-*
+prj load .tmp/newprj-fcnshared.prj > /dev/null
+s 0x10
+afi~stackframe,callconv
+afv
+s 0x30
+afi~stackframe,callconv
+afv
+rm .tmp/newprj-fcnshared.prj
+EOF
+EXPECT=<<EOF
+stackframe: 24
+callconv: arm64
+var int local_a @ x29-0x4
+stackframe: 24
+callconv: arm64
+var char local_b @ x29-0x8
+EOF
+RUN

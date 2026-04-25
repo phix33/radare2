@@ -22,12 +22,18 @@ enum {
 	RPRJ_FUNC,
 	RPRJ_MAGIC = 0x4a525052,
 };
-#define RPRJ_VERSION 3
+#define RPRJ_VERSION 4
 #define RPRJ_ADDR_SIZE 12
 #define RPRJ_XREF_SIZE (RPRJ_ADDR_SIZE * 2 + 4)
 #define RPRJ_FUNCTION_SIZE (4 + RPRJ_ADDR_SIZE + 4 + 4 + 4)
+#define RPRJ_FUNCTION_ATTR_SIZE (4 + 4 + 4 + 4 + 8)
 #define RPRJ_COLOR_SIZE 9
 #define RPRJ_BLOCK_SIZE (RPRJ_ADDR_SIZE + 8 + RPRJ_ADDR_SIZE + RPRJ_ADDR_SIZE + 4)
+#define RPRJ_VAR_SIZE 16
+
+enum {
+	RPRJ_FUNC_ATTR_NORETURN = 1 << 0,
+};
 
 // optional ut32 fields that may follow a R2ProjectFlag head, in bit order
 enum {
@@ -116,10 +122,18 @@ typedef struct {
 typedef struct {
 	ut32 name;
 	R2ProjectAddr addr;
+	ut32 attr;
+	ut32 nbbs;
+	ut32 nvars;
+} R2ProjectFunction;
+
+typedef struct {
+	ut32 cc;
 	ut32 type;
 	ut32 bits;
-	ut32 nbbs;
-} R2ProjectFunction;
+	ut32 flags;
+	ut64 stack;
+} R2ProjectFunctionAttr;
 
 typedef struct {
 	R2ProjectAddr addr;
@@ -128,6 +142,14 @@ typedef struct {
 	R2ProjectAddr fail;
 	ut32 color;
 } R2ProjectBlock;
+
+typedef struct {
+	ut32 name;
+	ut32 type;
+	st32 delta;
+	ut8 kind;
+	ut8 isarg;
+} R2ProjectVar;
 
 typedef struct {
 	RCore *core;
@@ -260,6 +282,10 @@ static void write_le64(RBuffer *b, ut64 v) {
 	ut8 buf[8];
 	r_write_le64 (buf, v);
 	r_buf_write (b, buf, sizeof (buf));
+}
+
+static void write_u8(RBuffer *b, ut8 v) {
+	r_buf_write (b, &v, sizeof (v));
 }
 
 static void write_project_addr(RBuffer *b, R2ProjectAddr addr) {
@@ -449,9 +475,22 @@ static bool rprj_function_read(RBuffer *b, R2ProjectFunction *fcn) {
 	fcn->name = r_read_le32 (buf);
 	fcn->addr.mod = r_read_le32 (buf + 4);
 	fcn->addr.delta = r_read_le64 (buf + 8);
-	fcn->type = r_read_le32 (buf + 16);
-	fcn->bits = r_read_le32 (buf + 20);
-	fcn->nbbs = r_read_le32 (buf + 24);
+	fcn->attr = r_read_le32 (buf + 16);
+	fcn->nbbs = r_read_le32 (buf + 20);
+	fcn->nvars = r_read_le32 (buf + 24);
+	return true;
+}
+
+static bool rprj_function_attr_read(RBuffer *b, R2ProjectFunctionAttr *attr) {
+	ut8 buf[RPRJ_FUNCTION_ATTR_SIZE];
+	if (r_buf_read (b, buf, sizeof (buf)) != (st64)sizeof (buf)) {
+		return false;
+	}
+	attr->cc = r_read_le32 (buf);
+	attr->type = r_read_le32 (buf + 4);
+	attr->bits = r_read_le32 (buf + 8);
+	attr->flags = r_read_le32 (buf + 12);
+	attr->stack = r_read_le64 (buf + 16);
 	return true;
 }
 
@@ -468,6 +507,19 @@ static bool rprj_block_read(RBuffer *b, R2ProjectBlock *bb) {
 	bb->fail.mod = r_read_le32 (buf + 32);
 	bb->fail.delta = r_read_le64 (buf + 36);
 	bb->color = r_read_le32 (buf + 44);
+	return true;
+}
+
+static bool rprj_var_read(RBuffer *b, R2ProjectVar *var) {
+	ut8 buf[RPRJ_VAR_SIZE];
+	if (r_buf_read (b, buf, sizeof (buf)) != (st64)sizeof (buf)) {
+		return false;
+	}
+	var->name = r_read_le32 (buf);
+	var->type = r_read_le32 (buf + 4);
+	var->delta = (st32)r_read_le32 (buf + 8);
+	var->kind = buf[12];
+	var->isarg = buf[13];
 	return true;
 }
 
@@ -518,6 +570,63 @@ static ut32 rprj_color_index(RList *colors, RColor *color) {
 	return idx;
 }
 
+static bool fcn_attr_eq(R2ProjectFunctionAttr *a, R2ProjectFunctionAttr *b) {
+	return a && b && a->cc == b->cc && a->type == b->type && a->bits == b->bits
+		&& a->flags == b->flags && a->stack == b->stack;
+}
+
+static ut32 rprj_fcn_attr_index(RList *attrs, R2ProjectFunctionAttr *attr) {
+	ut32 idx = 0;
+	RListIter *iter;
+	R2ProjectFunctionAttr *it;
+	r_list_foreach (attrs, iter, it) {
+		if (fcn_attr_eq (it, attr)) {
+			return idx;
+		}
+		idx++;
+	}
+	R2ProjectFunctionAttr *copy = r_mem_dup (attr, sizeof (*attr));
+	if (!copy) {
+		return UT32_MAX;
+	}
+	r_list_append (attrs, copy);
+	return idx;
+}
+
+static R2ProjectFunctionAttr rprj_function_attr(Cursor *cur, RAnalFunction *fcn) {
+	R2ProjectFunctionAttr attr = {
+		.cc = R_STR_ISNOTEMPTY (fcn->callconv)? rprj_st_append (cur->st, fcn->callconv): UT32_MAX,
+		.type = (ut32)fcn->type,
+		.bits = (ut32)fcn->bits,
+		.flags = fcn->is_noreturn? RPRJ_FUNC_ATTR_NORETURN: 0,
+		.stack = (ut64)fcn->maxstack,
+	};
+	return attr;
+}
+
+static void rprj_function_collect_attrs(Cursor *cur, RList *attrs, RAnalFunction *fcn) {
+	R2ProjectFunctionAttr attr = rprj_function_attr (cur, fcn);
+	rprj_fcn_attr_index (attrs, &attr);
+}
+
+static ut32 rprj_fcn_attr_index_for_fcn(Cursor *cur, RList *attrs, RAnalFunction *fcn) {
+	const ut32 flags = fcn->is_noreturn? RPRJ_FUNC_ATTR_NORETURN: 0;
+	const st64 stack = fcn->maxstack;
+	ut32 idx = 0;
+	RListIter *iter;
+	R2ProjectFunctionAttr *attr;
+	r_list_foreach (attrs, iter, attr) {
+		const char *cc = attr->cc != UT32_MAX? rprj_st_get (cur->st, attr->cc): NULL;
+		if ((ut32)fcn->type == attr->type && (ut32)fcn->bits == attr->bits
+				&& flags == attr->flags && stack == (st64)attr->stack
+				&& !strcmp (r_str_get (cc), r_str_get (fcn->callconv))) {
+			return idx;
+		}
+		idx++;
+	}
+	return UT32_MAX;
+}
+
 static void rprj_function_collect_colors(RList *colors, RAnalFunction *fcn) {
 	RListIter *iter;
 	RAnalBlock *bb;
@@ -526,18 +635,29 @@ static void rprj_function_collect_colors(RList *colors, RAnalFunction *fcn) {
 	}
 }
 
-static void rprj_function_write_one(Cursor *cur, RAnalFunction *fcn, RList *colors) {
+static void rprj_var_write_one(Cursor *cur, RAnalVar *var) {
+	write_le32 (cur->b, rprj_st_append (cur->st, var->name));
+	write_le32 (cur->b, rprj_st_append (cur->st, var->type));
+	write_le32 (cur->b, (ut32)var->delta);
+	write_u8 (cur->b, (ut8)var->kind);
+	write_u8 (cur->b, var->isarg? 1: 0);
+	write_u8 (cur->b, 0);
+	write_u8 (cur->b, 0);
+}
+
+static void rprj_function_write_one(Cursor *cur, RAnalFunction *fcn, RList *colors, RList *attrs) {
 	RListIter *iter;
 	RAnalBlock *bb;
 	ut32 nbbs = 0;
 	r_list_foreach (fcn->bbs, iter, bb) {
 		nbbs++;
 	}
+	const ut32 nvars = (ut32)RVecAnalVarPtr_length (&fcn->vars);
 	write_le32 (cur->b, rprj_st_append (cur->st, fcn->name));
 	write_project_addr (cur->b, addr_to_project (cur, fcn->addr));
-	write_le32 (cur->b, (ut32)fcn->type);
-	write_le32 (cur->b, (ut32)fcn->bits);
+	write_le32 (cur->b, rprj_fcn_attr_index_for_fcn (cur, attrs, fcn));
 	write_le32 (cur->b, nbbs);
+	write_le32 (cur->b, nvars);
 	r_list_foreach (fcn->bbs, iter, bb) {
 		write_project_addr (cur->b, addr_to_project (cur, bb->addr));
 		write_le64 (cur->b, bb->size);
@@ -545,11 +665,18 @@ static void rprj_function_write_one(Cursor *cur, RAnalFunction *fcn, RList *colo
 		write_project_addr (cur->b, addr_to_project (cur, bb->fail));
 		write_le32 (cur->b, rprj_color_index (colors, &bb->color));
 	}
+	RAnalVar **var;
+	R_VEC_FOREACH (&fcn->vars, var) {
+		rprj_var_write_one (cur, *var);
+	}
 }
 
 static void rprj_function_write(Cursor *cur) {
 	RList *colors = r_list_newf (free);
-	if (!colors) {
+	RList *attrs = r_list_newf (free);
+	if (!colors || !attrs) {
+		r_list_free (colors);
+		r_list_free (attrs);
 		return;
 	}
 	RListIter *iter;
@@ -559,12 +686,22 @@ static void rprj_function_write(Cursor *cur) {
 		if (!fcn || R_STR_ISEMPTY (fcn->name)) {
 			continue;
 		}
+		rprj_function_collect_attrs (cur, attrs, fcn);
 		rprj_function_collect_colors (colors, fcn);
 	}
 	write_le32 (cur->b, (ut32)r_list_length (colors));
 	RColor *color;
 	r_list_foreach (colors, iter, color) {
 		write_color (cur->b, color);
+	}
+	write_le32 (cur->b, (ut32)r_list_length (attrs));
+	R2ProjectFunctionAttr *attr;
+	r_list_foreach (attrs, iter, attr) {
+		write_le32 (cur->b, attr->cc);
+		write_le32 (cur->b, attr->type);
+		write_le32 (cur->b, attr->bits);
+		write_le32 (cur->b, attr->flags);
+		write_le64 (cur->b, attr->stack);
 	}
 	const ut64 count_at = r_buf_at (cur->b);
 	write_le32 (cur->b, 0);
@@ -573,12 +710,13 @@ static void rprj_function_write(Cursor *cur) {
 		if (!fcn || R_STR_ISEMPTY (fcn->name)) {
 			continue;
 		}
-		rprj_function_write_one (cur, fcn, colors);
+		rprj_function_write_one (cur, fcn, colors, attrs);
 		count++;
 	}
 	ut8 buf[4];
 	r_write_le32 (buf, count);
 	r_buf_write_at (cur->b, count_at, buf, sizeof (buf));
+	r_list_free (attrs);
 	r_list_free (colors);
 }
 
@@ -1279,6 +1417,75 @@ static void rprj_block_load(Cursor *cur, RAnalFunction *fcn, R2ProjectBlock *pbb
 	}
 }
 
+static void rprj_function_attr_load(Cursor *cur, RAnalFunction *fcn, R2ProjectFunctionAttr *attr, const char *name, ut64 va, int mode) {
+	if (!attr) {
+		return;
+	}
+	const char *cc = attr->cc != UT32_MAX? rprj_st_get (cur->st, attr->cc): NULL;
+	if (mode & MODE_SCRIPT) {
+		if (R_STR_ISNOTEMPTY (cc)) {
+			r_cons_printf (cur->core->cons, "'afc %s @ 0x%08"PFMT64x"\n", cc, va);
+		}
+		if ((st64)attr->stack) {
+			r_cons_printf (cur->core->cons, "'afS %"PFMT64d" @ 0x%08"PFMT64x"\n", (st64)attr->stack, va);
+		}
+		if (attr->flags & RPRJ_FUNC_ATTR_NORETURN) {
+			r_cons_printf (cur->core->cons, "'tn 0x%08"PFMT64x"\n", va);
+		}
+	}
+	if ((mode & MODE_LOAD) && fcn) {
+		fcn->type = attr->type;
+		fcn->bits = attr->bits;
+		fcn->maxstack = (int)(st64)attr->stack;
+		if (R_STR_ISNOTEMPTY (cc)) {
+			fcn->callconv = r_str_constpool_get (&cur->core->anal->constpool, cc);
+		}
+		fcn->is_noreturn = attr->flags & RPRJ_FUNC_ATTR_NORETURN;
+		if (fcn->is_noreturn) {
+			r_anal_noreturn_add (cur->core->anal, name, va);
+		}
+	}
+}
+
+static void rprj_var_load(Cursor *cur, RAnalFunction *fcn, R2ProjectVar *pvar, int mode, ut64 fcn_addr) {
+	const char *name = rprj_st_get (cur->st, pvar->name);
+	const char *type = rprj_st_get (cur->st, pvar->type);
+	if (!name) {
+		R_LOG_WARN ("Invalid function variable name index %u", pvar->name);
+		return;
+	}
+	if (mode & MODE_SCRIPT) {
+		const char *typ = type? type: "";
+		switch (pvar->kind) {
+		case R_ANAL_VAR_KIND_REG:
+			{
+				RRegItem *reg = cur->core->anal->reg
+					? r_reg_index_get (cur->core->anal->reg, R_ABS (pvar->delta))
+					: NULL;
+				if (reg) {
+					r_cons_printf (cur->core->cons, "'afvr %s %s %s @ 0x%08"PFMT64x"\n",
+						reg->name, name, typ, fcn_addr);
+					r_unref (reg);
+				}
+			}
+			break;
+		case R_ANAL_VAR_KIND_BPV:
+			r_cons_printf (cur->core->cons, "'afvb %d %s %s @ 0x%08"PFMT64x"\n",
+				pvar->delta, name, typ, fcn_addr);
+			break;
+		case R_ANAL_VAR_KIND_SPV:
+			r_cons_printf (cur->core->cons, "'afvs %d %s %s @ 0x%08"PFMT64x"\n",
+				pvar->delta, name, typ, fcn_addr);
+			break;
+		default:
+			break;
+		}
+	}
+	if ((mode & MODE_LOAD) && fcn) {
+		r_anal_function_set_var (fcn, pvar->delta, pvar->kind, type, -1, pvar->isarg, name);
+	}
+}
+
 static void rprj_function_load(Cursor *cur, int mode, ut64 next_entry) {
 	RBuffer *b = cur->b;
 	RCore *core = cur->core;
@@ -1308,7 +1515,36 @@ static void rprj_function_load(Cursor *cur, int mode, ut64 next_entry) {
 			}
 		}
 	}
+	ut32 nattrs = 0;
+	if (!read_le32 (b, &nattrs)) {
+		free (colors);
+		return;
+	}
+	R2ProjectFunctionAttr *attrs = NULL;
+	const ut64 rem_attrs = next_entry > r_buf_at (b)? next_entry - r_buf_at (b): 0;
+	if (rem_attrs < 4 || nattrs > (rem_attrs - 4) / RPRJ_FUNCTION_ATTR_SIZE) {
+		R_LOG_WARN ("Invalid function attribute table size %u", nattrs);
+		free (colors);
+		return;
+	}
+	if (nattrs > 0) {
+		attrs = R_NEWS0 (R2ProjectFunctionAttr, nattrs);
+		if (!attrs) {
+			free (colors);
+			return;
+		}
+		ut32 i;
+		for (i = 0; i < nattrs; i++) {
+			if (!rprj_function_attr_read (b, attrs + i)) {
+				R_LOG_WARN ("Truncated function attribute record %u/%u", i, nattrs);
+				free (attrs);
+				free (colors);
+				return;
+			}
+		}
+	}
 	if (!read_le32 (b, &count)) {
+		free (attrs);
 		free (colors);
 		return;
 	}
@@ -1334,15 +1570,17 @@ static void rprj_function_load(Cursor *cur, int mode, ut64 next_entry) {
 				fcn = rprj_function_get_registered (core->anal, va);
 				if (!fcn) {
 					rprj_function_drop_stale_name (core->anal, name);
-					fcn = r_anal_create_function (core->anal, name, va, pfcn.type, NULL);
+					R2ProjectFunctionAttr *attr = pfcn.attr < nattrs? attrs + pfcn.attr: NULL;
+					fcn = r_anal_create_function (core->anal, name, va, attr? attr->type: 0, NULL);
 				}
 				if (fcn) {
 					if (name) {
 						r_anal_function_rename (fcn, name);
 					}
-					fcn->type = pfcn.type;
-					fcn->bits = pfcn.bits;
 				}
+			}
+			if (pfcn.attr < nattrs) {
+				rprj_function_attr_load (cur, fcn, attrs + pfcn.attr, name, va, mode);
 			}
 		} else {
 			R_LOG_WARN ("Cannot resolve function record %u/%u", i, count);
@@ -1358,7 +1596,20 @@ static void rprj_function_load(Cursor *cur, int mode, ut64 next_entry) {
 				rprj_block_load (cur, fcn, &pbb, mode, va, colors, ncolors);
 			}
 		}
+		for (j = 0; j < pfcn.nvars && r_buf_at (b) < next_entry; j++) {
+			R2ProjectVar pvar;
+			if (!rprj_var_read (b, &pvar)) {
+				R_LOG_WARN ("Truncated variable record %u/%u in function %u/%u", j, pfcn.nvars, i, count);
+				free (attrs);
+				free (colors);
+				return;
+			}
+			if (resolved) {
+				rprj_var_load (cur, fcn, &pvar, mode, va);
+			}
+		}
 	}
+	free (attrs);
 	free (colors);
 }
 
