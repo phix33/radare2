@@ -670,3 +670,26 @@ EXPECT=<<EOF
 'afvb -4 live_var int @ 0x00000040
 EOF
 RUN
+
+NAME=newprj open restores file maps
+FILE=malloc://0x10
+CMDS=<<EOF
+mkdir .tmp
+rm -f .tmp/newprj-open.prj
+!printf AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA > .tmp/newprj-open.bin
+o--
+o .tmp/newprj-open.bin 0x1000
+f open.flag=0x1010
+prj save .tmp/newprj-open.prj > /dev/null
+o--
+prj open .tmp/newprj-open.prj > /dev/null
+fd 0x1010
+p8 1 @ 0x1010
+rm .tmp/newprj-open.prj
+rm .tmp/newprj-open.bin
+EOF
+EXPECT=<<EOF
+open.flag
+41
+EOF
+RUN

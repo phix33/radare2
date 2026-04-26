@@ -81,6 +81,32 @@ static void rprj_write_project_addr(RBuffer *b, R2ProjectAddr addr) {
 	rprj_write_le64 (b, addr.delta);
 }
 
+static void rprj_info_write(RBuffer *b, R2ProjectInfo *info) {
+	ut8 buf[RPRJ_INFO_SIZE] = {0};
+	r_write_le32 (buf + r_offsetof (R2ProjectInfo, name), info->name);
+	r_write_le32 (buf + r_offsetof (R2ProjectInfo, user), info->user);
+	r_write_le64 (buf + r_offsetof (R2ProjectInfo, time), info->time);
+	r_buf_write (b, buf, sizeof (buf));
+}
+
+static void rprj_cmnt_write_record(RBuffer *b, R2ProjectComment *cmnt) {
+	ut8 buf[RPRJ_CMNT_SIZE] = {0};
+	r_write_le32 (buf + r_offsetof (R2ProjectComment, text), cmnt->text);
+	r_write_le32 (buf + r_offsetof (R2ProjectComment, mod), cmnt->mod);
+	r_write_le64 (buf + r_offsetof (R2ProjectComment, delta), cmnt->delta);
+	r_write_le64 (buf + r_offsetof (R2ProjectComment, size), cmnt->size);
+	r_buf_write (b, buf, sizeof (buf));
+}
+
+static void rprj_hint_write(RBuffer *b, R2ProjectHint *hint) {
+	ut8 buf[RPRJ_HINT_SIZE] = {0};
+	r_write_le32 (buf + r_offsetof (R2ProjectHint, kind), hint->kind);
+	r_write_le32 (buf + r_offsetof (R2ProjectHint, mod), hint->mod);
+	r_write_le64 (buf + r_offsetof (R2ProjectHint, delta), hint->delta);
+	r_write_le64 (buf + r_offsetof (R2ProjectHint, value), hint->value);
+	r_buf_write (b, buf, sizeof (buf));
+}
+
 static bool rprj_read_exact(RBuffer *b, ut8 *buf, size_t len) {
 	return r_buf_read (b, buf, len) == (st64)len;
 }
@@ -124,7 +150,7 @@ static bool rprj_read_color(RBuffer *b, RColor *color) {
 }
 
 static bool rprj_cmnt_read(RBuffer *b, R2ProjectComment *cmnt) {
-	ut8 buf[sizeof (R2ProjectComment)];
+	ut8 buf[RPRJ_CMNT_SIZE];
 	if (!rprj_read_exact (b, buf, sizeof (buf))) {
 		return false;
 	}
@@ -158,7 +184,7 @@ static bool rprj_read_le32(RBuffer *b, ut32 *out) {
 }
 
 static bool rprj_hint_read(RBuffer *b, R2ProjectHint *hint) {
-	ut8 buf[sizeof (R2ProjectHint)];
+	ut8 buf[RPRJ_HINT_SIZE];
 	if (!rprj_read_exact (b, buf, sizeof (buf))) {
 		return false;
 	}
@@ -239,14 +265,14 @@ static bool rprj_var_read(RBuffer *b, R2ProjectVar *var) {
 }
 
 static void rprj_header_write(RBuffer *b) {
-	R2ProjectHeader hdr = {0};
-	r_write_le32 (&hdr.magic, RPRJ_MAGIC);
-	r_write_le32 (&hdr.version, RPRJ_VERSION);
-	r_buf_write (b, (ut8*)&hdr, sizeof (hdr));
+	ut8 buf[RPRJ_HEADER_SIZE] = {0};
+	r_write_le32 (buf + r_offsetof (R2ProjectHeader, magic), RPRJ_MAGIC);
+	r_write_le32 (buf + r_offsetof (R2ProjectHeader, version), RPRJ_VERSION);
+	r_buf_write (b, buf, sizeof (buf));
 }
 
 static bool rprj_header_read(RBuffer *b, R2ProjectHeader *hdr) {
-	ut8 buf[sizeof (R2ProjectHeader)];
+	ut8 buf[RPRJ_HEADER_SIZE];
 	if (!rprj_read_exact (b, buf, sizeof (buf))) {
 		return false;
 	}
@@ -256,13 +282,13 @@ static bool rprj_header_read(RBuffer *b, R2ProjectHeader *hdr) {
 }
 
 static bool rprj_entry_read(RBuffer *b, R2ProjectEntry *entry) {
-	ut8 buf[sizeof (R2ProjectEntry)];
+	ut8 buf[RPRJ_ENTRY_SIZE];
 	R_LOG_DEBUG ("reading entry at 0x%08"PFMT64x, r_buf_at (b));
 	if (!rprj_read_exact (b, buf, sizeof (buf))) {
 		return false;
 	}
-	entry->size = r_read_le32 (buf);
-	entry->type = r_read_le32 (buf + 4);
+	entry->size = r_read_le32 (buf + r_offsetof (R2ProjectEntry, size));
+	entry->type = r_read_le32 (buf + r_offsetof (R2ProjectEntry, type));
 	R_LOG_DEBUG ("entry at 0x%08"PFMT64x" with type=%d(%s) and size=%d",
 			r_buf_at (b), entry->type, rprj_entry_type_tostring (entry->type), entry->size);
 	return true;
@@ -270,7 +296,7 @@ static bool rprj_entry_read(RBuffer *b, R2ProjectEntry *entry) {
 
 static bool rprj_entry_begin(RBuffer *b, ut64 *at, ut32 type, ut32 version) {
 	*at = r_buf_at (b);
-	ut8 buf[sizeof (R2ProjectEntry)] = {0};
+	ut8 buf[RPRJ_ENTRY_SIZE] = {0};
 	r_write_le32 (buf + r_offsetof (R2ProjectEntry, size), -1);
 	r_write_le32 (buf + r_offsetof (R2ProjectEntry, type), type);
 	r_buf_write (b, buf, sizeof (buf));
@@ -312,7 +338,7 @@ static bool rprj_string_read(RBuffer *b, ut64 next_entry, char **s) {
 }
 
 static bool rprj_info_read(RBuffer *b, R2ProjectInfo *info) {
-	ut8 buf[sizeof (R2ProjectInfo)];
+	ut8 buf[RPRJ_INFO_SIZE];
 	if (!rprj_read_exact (b, buf, sizeof (buf))) {
 		return false;
 	}

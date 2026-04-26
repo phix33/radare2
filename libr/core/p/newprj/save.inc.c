@@ -13,7 +13,7 @@ static ut8 emit_str(RPrjCursor *cur, ut8 bit, const char *s) {
 }
 
 static void rprj_flag_write_one(RPrjCursor *cur, RFlagItem *fi) {
-	R2ProjectAddr addr = rprj_addr_to_project (cur, fi->addr);
+	R2ProjectAddr addr = rprj_mod_addr (cur, fi->addr);
 	const ut32 space_idx = fi->space? fi->space->privtag: UT32_MAX;
 	RFlagItemMeta *fim = r_flag_get_meta (cur->core->flags, fi->id);
 	const char *rn = (fi->realname && fi->realname != fi->name
@@ -65,16 +65,16 @@ static void rprj_flag_write(RPrjCursor *cur) {
 }
 
 static void rprj_cmnt_write_one(RPrjCursor *cur, RIntervalNode *node, RAnalMetaItem *mi) {
-	R2ProjectComment cmnt = {0};
 	ut64 va = node->start;
-	ut32 text = rprj_st_append (cur->st, mi->str);
-	R2ProjectAddr addr = rprj_addr_to_project (cur, va);
-	r_write_le32 (&cmnt.text, text);
-	r_write_le32 (&cmnt.mod, addr.mod);
-	r_write_le64 (&cmnt.delta, addr.delta);
+	R2ProjectAddr addr = rprj_mod_addr (cur, va);
 	const ut64 size = r_meta_node_size (node);
-	r_write_le64 (&cmnt.size, size);
-	r_buf_write (cur->b, (ut8*)&cmnt, sizeof (cmnt));
+	R2ProjectComment cmnt = {
+		.text = rprj_st_append (cur->st, mi->str),
+		.mod = addr.mod,
+		.delta = addr.delta,
+		.size = size,
+	};
+	rprj_cmnt_write_record (cur->b, &cmnt);
 }
 
 static void rprj_cmnt_write(RPrjCursor *cur) {
@@ -89,8 +89,8 @@ static void rprj_cmnt_write(RPrjCursor *cur) {
 }
 
 static void rprj_xref_write_one(RPrjCursor *cur, RAnalRef *ref) {
-	R2ProjectAddr from = rprj_addr_to_project (cur, ref->at);
-	R2ProjectAddr to = rprj_addr_to_project (cur, ref->addr);
+	R2ProjectAddr from = rprj_mod_addr (cur, ref->at);
+	R2ProjectAddr to = rprj_mod_addr (cur, ref->addr);
 	rprj_write_project_addr (cur->b, from);
 	rprj_write_project_addr (cur->b, to);
 	rprj_write_le32 (cur->b, ref->type);
@@ -114,47 +114,45 @@ static void rprj_xref_write(RPrjCursor *cur) {
 	r_buf_write_at (cur->b, count_at, buf, sizeof (buf));
 }
 
-static ut32 rprj_color_index(RList *colors, RColor *color) {
+static ut32 rprj_color_index(RVecPrjColor *colors, RColor *color) {
 	if (!rprj_color_is_set (color)) {
 		return UT32_MAX;
 	}
 	ut32 idx = 0;
-	RListIter *iter;
 	RColor *it;
-	r_list_foreach (colors, iter, it) {
+	R_VEC_FOREACH (colors, it) {
 		if (rprj_color_eq (it, color)) {
 			return idx;
 		}
 		idx++;
 	}
-	RColor *copy = r_mem_dup (color, sizeof (*color));
+	RColor *copy = RVecPrjColor_emplace_back (colors);
 	if (!copy) {
 		return UT32_MAX;
 	}
-	r_list_append (colors, copy);
+	*copy = *color;
 	return idx;
 }
 
 static bool fcn_attr_eq(R2ProjectFunctionAttr *a, R2ProjectFunctionAttr *b) {
-	return a && b && a->cc == b->cc && a->type == b->type && a->bits == b->bits
+	return a->cc == b->cc && a->type == b->type && a->bits == b->bits
 		&& a->flags == b->flags && a->stack == b->stack;
 }
 
-static ut32 rprj_fcn_attr_index(RList *attrs, R2ProjectFunctionAttr *attr) {
+static ut32 rprj_fcn_attr_index(RVecPrjFunctionAttr *attrs, R2ProjectFunctionAttr *attr) {
 	ut32 idx = 0;
-	RListIter *iter;
 	R2ProjectFunctionAttr *it;
-	r_list_foreach (attrs, iter, it) {
+	R_VEC_FOREACH (attrs, it) {
 		if (fcn_attr_eq (it, attr)) {
 			return idx;
 		}
 		idx++;
 	}
-	R2ProjectFunctionAttr *copy = r_mem_dup (attr, sizeof (*attr));
+	R2ProjectFunctionAttr *copy = RVecPrjFunctionAttr_emplace_back (attrs);
 	if (!copy) {
 		return UT32_MAX;
 	}
-	r_list_append (attrs, copy);
+	*copy = *attr;
 	return idx;
 }
 
@@ -169,18 +167,17 @@ static R2ProjectFunctionAttr rprj_function_attr(RPrjCursor *cur, RAnalFunction *
 	return attr;
 }
 
-static void rprj_function_collect_attrs(RPrjCursor *cur, RList *attrs, RAnalFunction *fcn) {
+static void rprj_function_collect_attrs(RPrjCursor *cur, RVecPrjFunctionAttr *attrs, RAnalFunction *fcn) {
 	R2ProjectFunctionAttr attr = rprj_function_attr (cur, fcn);
 	rprj_fcn_attr_index (attrs, &attr);
 }
 
-static ut32 rprj_fcn_attr_index_for_fcn(RPrjCursor *cur, RList *attrs, RAnalFunction *fcn) {
+static ut32 rprj_fcn_attr_index_for_fcn(RPrjCursor *cur, RVecPrjFunctionAttr *attrs, RAnalFunction *fcn) {
 	const ut32 flags = fcn->is_noreturn? RPRJ_FUNC_ATTR_NORETURN: 0;
 	const st64 stack = fcn->maxstack;
 	ut32 idx = 0;
-	RListIter *iter;
 	R2ProjectFunctionAttr *attr;
-	r_list_foreach (attrs, iter, attr) {
+	R_VEC_FOREACH (attrs, attr) {
 		const char *cc = attr->cc != UT32_MAX? rprj_st_get (cur->st, attr->cc): NULL;
 		if ((ut32)fcn->type == attr->type && (ut32)fcn->bits == attr->bits
 				&& flags == attr->flags && stack == (st64)attr->stack
@@ -192,7 +189,7 @@ static ut32 rprj_fcn_attr_index_for_fcn(RPrjCursor *cur, RList *attrs, RAnalFunc
 	return UT32_MAX;
 }
 
-static void rprj_function_collect_colors(RList *colors, RAnalFunction *fcn) {
+static void rprj_function_collect_colors(RVecPrjColor *colors, RAnalFunction *fcn) {
 	RListIter *iter;
 	RAnalBlock *bb;
 	r_list_foreach (fcn->bbs, iter, bb) {
@@ -210,7 +207,7 @@ static void rprj_var_write_one(RPrjCursor *cur, RAnalVar *var) {
 	rprj_write_u8 (cur->b, 0);
 }
 
-static void rprj_function_write_one(RPrjCursor *cur, RAnalFunction *fcn, RList *colors, RList *attrs) {
+static void rprj_function_write_one(RPrjCursor *cur, RAnalFunction *fcn, RVecPrjColor *colors, RVecPrjFunctionAttr *attrs) {
 	RListIter *iter;
 	RAnalBlock *bb;
 	ut32 nbbs = 0;
@@ -219,15 +216,15 @@ static void rprj_function_write_one(RPrjCursor *cur, RAnalFunction *fcn, RList *
 	}
 	const ut32 nvars = (ut32)RVecAnalVarPtr_length (&fcn->vars);
 	rprj_write_le32 (cur->b, rprj_st_append (cur->st, fcn->name));
-	rprj_write_project_addr (cur->b, rprj_addr_to_project (cur, fcn->addr));
+	rprj_write_project_addr (cur->b, rprj_mod_addr (cur, fcn->addr));
 	rprj_write_le32 (cur->b, rprj_fcn_attr_index_for_fcn (cur, attrs, fcn));
 	rprj_write_le32 (cur->b, nbbs);
 	rprj_write_le32 (cur->b, nvars);
 	r_list_foreach (fcn->bbs, iter, bb) {
-		rprj_write_project_addr (cur->b, rprj_addr_to_project (cur, bb->addr));
+		rprj_write_project_addr (cur->b, rprj_mod_addr (cur, bb->addr));
 		rprj_write_le64 (cur->b, bb->size);
-		rprj_write_project_addr (cur->b, rprj_addr_to_project (cur, bb->jump));
-		rprj_write_project_addr (cur->b, rprj_addr_to_project (cur, bb->fail));
+		rprj_write_project_addr (cur->b, rprj_mod_addr (cur, bb->jump));
+		rprj_write_project_addr (cur->b, rprj_mod_addr (cur, bb->fail));
 		rprj_write_le32 (cur->b, rprj_color_index (colors, &bb->color));
 	}
 	RAnalVar **var;
@@ -237,13 +234,10 @@ static void rprj_function_write_one(RPrjCursor *cur, RAnalFunction *fcn, RList *
 }
 
 static void rprj_function_write(RPrjCursor *cur) {
-	RList *colors = r_list_newf (free);
-	RList *attrs = r_list_newf (free);
-	if (!colors || !attrs) {
-		r_list_free (colors);
-		r_list_free (attrs);
-		return;
-	}
+	RVecPrjColor colors;
+	RVecPrjFunctionAttr attrs;
+	RVecPrjColor_init (&colors);
+	RVecPrjFunctionAttr_init (&attrs);
 	RListIter *iter;
 	RAnalFunction *fcn;
 	RList *fcns = r_anal_get_fcns (cur->core->anal);
@@ -251,17 +245,17 @@ static void rprj_function_write(RPrjCursor *cur) {
 		if (!fcn || R_STR_ISEMPTY (fcn->name)) {
 			continue;
 		}
-		rprj_function_collect_attrs (cur, attrs, fcn);
-		rprj_function_collect_colors (colors, fcn);
+		rprj_function_collect_attrs (cur, &attrs, fcn);
+		rprj_function_collect_colors (&colors, fcn);
 	}
-	rprj_write_le32 (cur->b, (ut32)r_list_length (colors));
+	rprj_write_le32 (cur->b, (ut32)RVecPrjColor_length (&colors));
 	RColor *color;
-	r_list_foreach (colors, iter, color) {
+	R_VEC_FOREACH (&colors, color) {
 		rprj_write_color (cur->b, color);
 	}
-	rprj_write_le32 (cur->b, (ut32)r_list_length (attrs));
+	rprj_write_le32 (cur->b, (ut32)RVecPrjFunctionAttr_length (&attrs));
 	R2ProjectFunctionAttr *attr;
-	r_list_foreach (attrs, iter, attr) {
+	R_VEC_FOREACH (&attrs, attr) {
 		rprj_write_le32 (cur->b, attr->cc);
 		rprj_write_le32 (cur->b, attr->type);
 		rprj_write_le32 (cur->b, attr->bits);
@@ -275,14 +269,14 @@ static void rprj_function_write(RPrjCursor *cur) {
 		if (!fcn || R_STR_ISEMPTY (fcn->name)) {
 			continue;
 		}
-		rprj_function_write_one (cur, fcn, colors, attrs);
+		rprj_function_write_one (cur, fcn, &colors, &attrs);
 		count++;
 	}
 	ut8 buf[4];
 	r_write_le32 (buf, count);
 	r_buf_write_at (cur->b, count_at, buf, sizeof (buf));
-	r_list_free (attrs);
-	r_list_free (colors);
+	RVecPrjFunctionAttr_fini (&attrs);
+	RVecPrjColor_fini (&colors);
 }
 
 typedef struct {
@@ -311,19 +305,14 @@ static bool rprj_hints_collect_cb(ut64 addr, const RVecAnalAddrHintRecord *recor
 		if (!kind) {
 			continue;
 		}
-		R2ProjectHint hint = {0};
-		ut32 mid = UT32_MAX;
-		R2ProjectMod *mod = rprj_find_mod (cur, addr, &mid);
-		r_write_le32 (&hint.kind, kind);
-		if (mod) {
-			r_write_le32 (&hint.mod, mid);
-			r_write_le64 (&hint.delta, addr - mod->vmin);
-		} else {
-			r_write_le32 (&hint.mod, UT32_MAX);
-			r_write_le64 (&hint.delta, addr);
-		}
-		r_write_le64 (&hint.value, val);
-		r_buf_write (cur->b, (const ut8*)&hint, sizeof (hint));
+		R2ProjectAddr paddr = rprj_mod_addr (cur, addr);
+		R2ProjectHint hint = {
+			.kind = kind,
+			.mod = paddr.mod,
+			.delta = paddr.delta,
+			.value = val,
+		};
+		rprj_hint_write (cur->b, &hint);
 	}
 	return true;
 }
@@ -405,8 +394,9 @@ static void r_core_newprj_save(RCore *core, const char *file) {
 		.core = core,
 		.st = &st,
 		.b = b,
-		.mods = r_list_newf (free),
 	};
+	RVecPrjMod_init (&cur.mods);
+	RVecPrjMap *maps = rprj_maps_current (&cur);
 	ut64 at;
 	if (rprj_entry_begin (b, &at, RPRJ_INFO, 1)) {
 		const char *prj_name = r_config_get (core->config, "prj.name");
@@ -416,13 +406,18 @@ static void r_core_newprj_save(RCore *core, const char *file) {
 			.user = rprj_st_append (&st, r_str_get (prj_user)),
 			.time = r_time_now ()
 		};
-		r_buf_write (b, (const ut8*)&info, sizeof (info));
+		rprj_info_write (b, &info);
+		rprj_entry_end (b, at);
+	}
+	if (rprj_entry_begin (b, &at, RPRJ_MAPS, 1)) {
+		rprj_maps_write (&cur, maps);
 		rprj_entry_end (b, at);
 	}
 	if (rprj_entry_begin (b, &at, RPRJ_MODS, 1)) {
-		rprj_mods_write (&cur);
+		rprj_mods_write (&cur, maps);
 		rprj_entry_end (b, at);
 	}
+	RVecPrjMap_free (maps);
 	if (rprj_entry_begin (b, &at, RPRJ_EVAL, 1)) {
 		rprj_eval_write (&cur);
 		rprj_entry_end (b, at);
@@ -470,6 +465,6 @@ static void r_core_newprj_save(RCore *core, const char *file) {
 		}
 	}
 	r_unref (b);
-	r_list_free (cur.mods);
+	RVecPrjMod_fini (&cur.mods);
 	free (st.data);
 }

@@ -59,7 +59,7 @@ static void rprj_eval_load(RPrjCursor *cur, int mode, ut64 next_entry) {
 }
 
 static ut8 *rprj_find(RBuffer *b, ut32 type, ut32 *size) {
-	r_buf_seek (b, sizeof (R2ProjectHeader), SEEK_SET);
+	r_buf_seek (b, RPRJ_HEADER_SIZE, SEEK_SET);
 	const ut64 last = r_buf_size (b);
 	ut64 at = r_buf_at (b);
 	*size = 0;
@@ -69,15 +69,15 @@ static ut8 *rprj_find(RBuffer *b, ut32 type, ut32 *size) {
 			R_LOG_ERROR ("find: Cannot read entry");
 			break;
 		}
-		if (entry.size < sizeof (R2ProjectEntry) || entry.size > last - at) {
+		if (entry.size < RPRJ_ENTRY_SIZE || entry.size > last - at) {
 			R_LOG_ERROR ("invalid size");
 			break;
 		}
 		if (entry.type == type) {
-			const ut32 data_size = entry.size - sizeof (R2ProjectEntry);
+			const ut32 data_size = entry.size - RPRJ_ENTRY_SIZE;
 			ut8 *buf = data_size? malloc (data_size): R_NEWS0 (ut8, 1);
 			if (buf) {
-				if (data_size && r_buf_read_at (b, at + sizeof (R2ProjectEntry), buf, data_size) != (st64)data_size) {
+				if (data_size && r_buf_read_at (b, at + RPRJ_ENTRY_SIZE, buf, data_size) != (st64)data_size) {
 					free (buf);
 					return NULL;
 				}
@@ -173,7 +173,7 @@ static void rprj_flag_load(RPrjCursor *cur, int mode, ut64 next_entry) {
 			.delta = flag.delta,
 		};
 		ut64 va = UT64_MAX;
-		if (!rprj_project_addr_to_va (cur, &addr, &va)) {
+		if (!rprj_mod_va (cur, &addr, &va)) {
 			R_LOG_WARN ("Cannot resolve address for flag %s", flag_name);
 			continue;
 		}
@@ -280,9 +280,9 @@ static void rprj_block_load(RPrjCursor *cur, RAnalFunction *fcn, R2ProjectBlock 
 	ut64 va = UT64_MAX;
 	ut64 jump = UT64_MAX;
 	ut64 fail = UT64_MAX;
-	if (!rprj_project_addr_to_va (cur, &pbb->addr, &va)
-			|| !rprj_project_addr_to_va (cur, &pbb->jump, &jump)
-			|| !rprj_project_addr_to_va (cur, &pbb->fail, &fail)) {
+	if (!rprj_mod_va (cur, &pbb->addr, &va)
+			|| !rprj_mod_va (cur, &pbb->jump, &jump)
+			|| !rprj_mod_va (cur, &pbb->fail, &fail)) {
 		R_LOG_WARN ("Cannot resolve basic block for function %s", fcn? fcn->name: "?");
 		return;
 	}
@@ -804,7 +804,7 @@ static void rprj_function_load(RPrjCursor *cur, int mode, ut64 next_entry) {
 		}
 		ut64 va = UT64_MAX;
 		RAnalFunction *fcn = NULL;
-		const bool resolved = rprj_project_addr_to_va (cur, &pfcn.addr, &va);
+		const bool resolved = rprj_mod_va (cur, &pfcn.addr, &va);
 		if (resolved) {
 			if (mode & R_CORE_NEWPRJ_MODE_DIFF) {
 				R2ProjectDiffFunction *df = R_NEW (R2ProjectDiffFunction);
@@ -865,9 +865,9 @@ static void rprj_function_load(RPrjCursor *cur, int mode, ut64 next_entry) {
 			if ((mode & R_CORE_NEWPRJ_MODE_DIFF) && resolved) {
 				R2ProjectDiffBlock *dbb = R_NEW0 (R2ProjectDiffBlock);
 				dbb->size = pbb.size;
-				rprj_project_addr_to_va (cur, &pbb.addr, &dbb->addr);
-				rprj_project_addr_to_va (cur, &pbb.jump, &dbb->jump);
-				rprj_project_addr_to_va (cur, &pbb.fail, &dbb->fail);
+				rprj_mod_va (cur, &pbb.addr, &dbb->addr);
+				rprj_mod_va (cur, &pbb.jump, &dbb->jump);
+				rprj_mod_va (cur, &pbb.fail, &dbb->fail);
 				if (pbb.color < ncolors) {
 					dbb->has_color = true;
 					dbb->color = colors[pbb.color];
@@ -978,44 +978,59 @@ static void r_core_newprj_load(RCore *core, const char *file, int mode) {
 		.core = core,
 		.st = &st,
 		.b = b,
-		.mods = r_list_newf (free),
 	};
+	RVecPrjMod_init (&cur.mods);
 	st.data = rprj_find (b, RPRJ_STRS, &st.size);
 	if (!st.data) {
 		R_LOG_ERROR ("Missing string table (RPRJ_STRS) in project file");
-		r_list_free (cur.mods);
+		RVecPrjMod_fini (&cur.mods);
 		r_unref (b);
 		return;
 	}
 	if (!rprj_st_is_valid (&st)) {
 		R_LOG_ERROR ("Invalid string table (RPRJ_STRS) in project file");
-		r_list_free (cur.mods);
+		RVecPrjMod_fini (&cur.mods);
 		free (st.data);
 		r_unref (b);
 		return;
 	}
-	r_buf_seek (b, sizeof (R2ProjectHeader), SEEK_SET);
+	if (mode & R_CORE_NEWPRJ_MODE_RIO) {
+		ut32 mapsize = 0;
+		ut8 *mapsbuf = rprj_find (b, RPRJ_MAPS, &mapsize);
+		RBuffer *maps = mapsbuf? r_buf_new_with_bytes (mapsbuf, mapsize): NULL;
+		if (maps) {
+			RBuffer *ob = cur.b;
+			cur.b = maps;
+			rprj_maps_restore (&cur);
+			cur.b = ob;
+			r_unref (maps);
+		}
+		free (mapsbuf);
+	}
 
 	ut32 modsize = 0;
 	ut8 *modsbuf = rprj_find (b, RPRJ_MODS, &modsize);
 	RBuffer *mods = modsbuf? r_buf_new_with_bytes (modsbuf, modsize): NULL;
 	if (mods) {
 		ut32 n = 0;
-		while (n + sizeof (R2ProjectMod) <= modsize) {
+		while (n + RPRJ_MOD_SIZE <= modsize) {
 			R2ProjectMod mod;
 			if (!rprj_mods_read (mods, &mod)) {
 				R_LOG_ERROR ("Cannot read mod");
 				break;
 			}
 			R_LOG_DEBUG ("MOD: %s + 0x%08"PFMT64x, rprj_st_get (&st, mod.name), mod.vmin);
-			r_list_append (cur.mods, r_mem_dup (&mod, sizeof (mod)));
-			n += sizeof (mod);
+			R2ProjectMod *slot = RVecPrjMod_emplace_back (&cur.mods);
+			if (slot) {
+				*slot = mod;
+			}
+			n += RPRJ_MOD_SIZE;
 		}
 		rprj_mods_rebase (&cur);
 	}
 
 	R2ProjectEntry entry;
-	r_buf_seek (b, sizeof (R2ProjectHeader), SEEK_SET);
+	r_buf_seek (b, RPRJ_HEADER_SIZE, SEEK_SET);
 	int n = 0;
 	const ut64 bsz = r_buf_size (b);
 	while (r_buf_at (b) < bsz) {
@@ -1024,7 +1039,7 @@ static void r_core_newprj_load(RCore *core, const char *file, int mode) {
 			R_LOG_ERROR ("Cannot read entry");
 			break;
 		}
-		if (entry.size < sizeof (R2ProjectEntry) || entry.size > bsz - entry_at) {
+		if (entry.size < RPRJ_ENTRY_SIZE || entry.size > bsz - entry_at) {
 			R_LOG_ERROR ("Invalid entry size %u", entry.size);
 			break;
 		}
@@ -1044,7 +1059,7 @@ static void r_core_newprj_load(RCore *core, const char *file, int mode) {
 					ut64 size;
 					const ut8 *bdata = r_buf_data (b, &size);
 					const ut64 at = r_buf_at (b);
-					const ut32 data_size = entry.size - sizeof (R2ProjectEntry);
+					const ut32 data_size = entry.size - RPRJ_ENTRY_SIZE;
 					if (bdata && at + data_size <= size) {
 						const ut8 *data = bdata + at;
 						ut32 i = 0;
@@ -1095,7 +1110,7 @@ static void r_core_newprj_load(RCore *core, const char *file, int mode) {
 		case RPRJ_INFO:
 			{
 				R2ProjectInfo cmds = {0};
-				if (!rprj_entry_has (b, next_entry, sizeof (R2ProjectInfo))) {
+				if (!rprj_entry_has (b, next_entry, RPRJ_INFO_SIZE)) {
 					R_LOG_WARN ("Truncated project info entry");
 					break;
 				}
@@ -1131,9 +1146,9 @@ static void r_core_newprj_load(RCore *core, const char *file, int mode) {
 		case RPRJ_CMNT:
 			{
 				ut64 at = r_buf_at (b);
-				ut64 last = at + entry.size - sizeof (R2ProjectEntry);
+				ut64 last = at + entry.size - RPRJ_ENTRY_SIZE;
 				RList *seen = (mode & R_CORE_NEWPRJ_MODE_DIFF)? r_list_newf (free): NULL;
-				while (at < last && last - at >= sizeof (R2ProjectComment)) {
+				while (at < last && last - at >= RPRJ_CMNT_SIZE) {
 					R2ProjectComment cmnt;
 					if (!rprj_cmnt_read (b, &cmnt)) {
 						R_LOG_WARN ("Truncated comment record at 0x%08"PFMT64x, at);
@@ -1142,7 +1157,7 @@ static void r_core_newprj_load(RCore *core, const char *file, int mode) {
 					const char *cmnt_text = rprj_st_get (&st, cmnt.text);
 					if (!cmnt_text) {
 						R_LOG_WARN ("Invalid comment string index %u", cmnt.text);
-						at += sizeof (cmnt);
+						at += RPRJ_CMNT_SIZE;
 						continue;
 					}
 					R2ProjectAddr addr = {
@@ -1150,7 +1165,7 @@ static void r_core_newprj_load(RCore *core, const char *file, int mode) {
 						.delta = cmnt.delta,
 					};
 					ut64 va = UT64_MAX;
-					if (rprj_project_addr_to_va (&cur, &addr, &va)) {
+					if (rprj_mod_va (&cur, &addr, &va)) {
 						char *b64 = sdb_encode ((const ut8 *)cmnt_text, strlen (cmnt_text));
 						if (b64) {
 							char *cmd = r_str_newf ("CCu base64:%s", b64);
@@ -1173,7 +1188,7 @@ static void r_core_newprj_load(RCore *core, const char *file, int mode) {
 					} else {
 						R_LOG_WARN ("Cannot resolve address for comment %s", cmnt_text);
 					}
-					at += sizeof (cmnt);
+					at += RPRJ_CMNT_SIZE;
 				}
 				if (mode & R_CORE_NEWPRJ_MODE_DIFF) {
 					RIntervalTreeIter it;
@@ -1216,8 +1231,8 @@ static void r_core_newprj_load(RCore *core, const char *file, int mode) {
 					}
 					ut64 from = UT64_MAX;
 					ut64 to = UT64_MAX;
-					if (!rprj_project_addr_to_va (&cur, &xref.from, &from)
-							|| !rprj_project_addr_to_va (&cur, &xref.to, &to)) {
+					if (!rprj_mod_va (&cur, &xref.from, &from)
+							|| !rprj_mod_va (&cur, &xref.to, &to)) {
 						R_LOG_WARN ("Cannot resolve xref record %u/%u", i, count);
 						continue;
 					}
@@ -1274,9 +1289,9 @@ static void r_core_newprj_load(RCore *core, const char *file, int mode) {
 		case RPRJ_HINT:
 			{
 				ut64 at = r_buf_at (b);
-				ut64 last = at + entry.size - sizeof (R2ProjectEntry);
+				ut64 last = at + entry.size - RPRJ_ENTRY_SIZE;
 				RList *seen = (mode & R_CORE_NEWPRJ_MODE_DIFF)? r_list_newf (free): NULL;
-				while (at < last && last - at >= sizeof (R2ProjectHint)) {
+				while (at < last && last - at >= RPRJ_HINT_SIZE) {
 					R2ProjectHint hint;
 					if (!rprj_hint_read (b, &hint)) {
 						R_LOG_WARN ("Truncated hint record at 0x%08"PFMT64x, at);
@@ -1287,9 +1302,9 @@ static void r_core_newprj_load(RCore *core, const char *file, int mode) {
 						.delta = hint.delta,
 					};
 					ut64 va = UT64_MAX;
-					if (!rprj_project_addr_to_va (&cur, &addr, &va) || va == UT64_MAX) {
+					if (!rprj_mod_va (&cur, &addr, &va) || va == UT64_MAX) {
 						R_LOG_WARN ("Cannot resolve hint record at 0x%08"PFMT64x, at);
-						at += sizeof (hint);
+						at += RPRJ_HINT_SIZE;
 						continue;
 					}
 					if (hint.kind == 1) { // immbase
@@ -1333,7 +1348,7 @@ static void r_core_newprj_load(RCore *core, const char *file, int mode) {
 							r_anal_hint_set_newbits (core->anal, va, nbits);
 						}
 					}
-					at += sizeof (hint);
+					at += RPRJ_HINT_SIZE;
 				}
 				if (mode & R_CORE_NEWPRJ_MODE_DIFF) {
 					R2ProjectDiffCtx ctx = { &cur, seen };
@@ -1355,7 +1370,7 @@ static void r_core_newprj_load(RCore *core, const char *file, int mode) {
 	}
 	r_unref (mods);
 	free (modsbuf);
-	r_list_free (cur.mods);
+	RVecPrjMod_fini (&cur.mods);
 	free (st.data);
 	r_unref (b);
 }
@@ -1376,5 +1391,5 @@ static void r_core_newprj_open(RCore *core, const char *file) {
 	}
 	r_core_cmd0 (core, "o--");
 	r_config_set (core->config, "prj.name", "");
-	r_core_newprj_load (core, file, R_CORE_NEWPRJ_MODE_LOAD | R_CORE_NEWPRJ_MODE_CMD);
+	r_core_newprj_load (core, file, R_CORE_NEWPRJ_MODE_LOAD | R_CORE_NEWPRJ_MODE_CMD | R_CORE_NEWPRJ_MODE_RIO);
 }

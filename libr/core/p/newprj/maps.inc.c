@@ -8,19 +8,6 @@
 #define RPRJ_MOD_MATCH_MIN_SCORE 60
 
 typedef struct {
-	char *name;
-	char *file;
-	ut64 pmin;
-	ut64 pmax;
-	ut64 vmin;
-	ut64 vmax;
-	ut32 csum;
-	int perm;
-	int order;
-	bool used;
-} RPrjMap;
-
-typedef struct {
 	R2ProjectMod *mod;
 	int id;
 	int order;
@@ -48,14 +35,6 @@ static ut64 rprj_range_end(ut64 start, ut64 size) {
 	return start + size - 1;
 }
 
-static void rprj_map_free(RPrjMap *map) {
-	if (map) {
-		free (map->name);
-		free (map->file);
-		free (map);
-	}
-}
-
 static ut32 rprj_checksum_update(ut32 csum, const ut8 *buf, int len) {
 	int i;
 	for (i = 0; i < len; i++) {
@@ -65,7 +44,7 @@ static ut32 rprj_checksum_update(ut32 csum, const ut8 *buf, int len) {
 }
 
 static ut32 rprj_checksum(RCore *core, ut64 va, ut64 size) {
-	if (!core || !core->io || !size) {
+	if (!size) {
 		return 0;
 	}
 	ut32 csum = 0;
@@ -94,12 +73,16 @@ static ut32 rprj_checksum(RCore *core, ut64 va, ut64 size) {
 	return csum;
 }
 
-static bool rprj_map_add(RPrjCursor *cur, RList *maps, const char *name, const char *file,
+static void rprj_map_add(RPrjCursor *cur, RVecPrjMap *maps, const char *name, const char *file,
 		ut64 pmin, ut64 pmax, ut64 vmin, ut64 vmax, int perm) {
-	if (!cur || !maps || vmax < vmin) {
-		return false;
+	if (vmax < vmin) {
+		return;
 	}
-	RPrjMap *map = R_NEW0 (RPrjMap);
+	const int order = (int)RVecPrjMap_length (maps);
+	RPrjMap *map = RVecPrjMap_emplace_back (maps);
+	if (!map) {
+		return;
+	}
 	map->name = R_STR_ISNOTEMPTY (name)? strdup (name): NULL;
 	map->file = R_STR_ISNOTEMPTY (file)? strdup (file): NULL;
 	map->pmin = pmin;
@@ -107,15 +90,11 @@ static bool rprj_map_add(RPrjCursor *cur, RList *maps, const char *name, const c
 	map->vmin = vmin;
 	map->vmax = vmax;
 	map->perm = perm;
-	map->order = r_list_length (maps);
+	map->order = order;
 	map->csum = rprj_checksum (cur->core, vmin, rprj_range_size (vmin, vmax));
-	r_list_append (maps, map);
-	return true;
 }
 
-static int rprj_map_cmp(const void *a, const void *b) {
-	const RPrjMap *ma = (const RPrjMap *)a;
-	const RPrjMap *mb = (const RPrjMap *)b;
+static int rprj_map_cmp(const RPrjMap *ma, const RPrjMap *mb) {
 	if (ma->vmin < mb->vmin) {
 		return -1;
 	}
@@ -125,16 +104,25 @@ static int rprj_map_cmp(const void *a, const void *b) {
 	return ma->vmax < mb->vmax? -1: ma->vmax > mb->vmax;
 }
 
-static void rprj_maps_assign_order(RList *maps) {
-	RListIter *iter;
+static void rprj_maps_assign_order(RVecPrjMap *maps) {
 	RPrjMap *map;
 	int order = 0;
-	r_list_foreach (maps, iter, map) {
+	R_VEC_FOREACH (maps, map) {
 		map->order = order++;
 	}
 }
 
-static bool rprj_maps_from_debug_list(RPrjCursor *cur, RList *maps, RList *src) {
+static RVecPrjMap *rprj_maps_done(RVecPrjMap *maps) {
+	if (RVecPrjMap_empty (maps)) {
+		RVecPrjMap_free (maps);
+		return NULL;
+	}
+	RVecPrjMap_sort (maps, rprj_map_cmp);
+	rprj_maps_assign_order (maps);
+	return maps;
+}
+
+static void rprj_maps_from_debug_list(RPrjCursor *cur, RVecPrjMap *maps, RList *src) {
 	RListIter *iter;
 	RDebugMap *dm;
 	r_list_foreach (src, iter, dm) {
@@ -146,28 +134,18 @@ static bool rprj_maps_from_debug_list(RPrjCursor *cur, RList *maps, RList *src) 
 		rprj_map_add (cur, maps, dm->name, dm->file, dm->offset, pmax,
 			dm->addr, dm->addr_end - 1, dm->perm);
 	}
-	return !r_list_empty (maps);
 }
 
-static RList *rprj_maps_from_debug(RPrjCursor *cur) {
-	RCore *core = cur? cur->core: NULL;
-	if (!core || !core->dbg || !r_config_get_b (core->config, "cfg.debug")) {
+static RVecPrjMap *rprj_maps_from_debug(RPrjCursor *cur) {
+	RCore *core = cur->core;
+	if (!core->dbg || !r_config_get_b (core->config, "cfg.debug")) {
 		return NULL;
 	}
-	RList *maps = r_list_newf ((RListFree)rprj_map_free);
-	if (!maps) {
-		return NULL;
-	}
+	RVecPrjMap *maps = RVecPrjMap_new ();
 	r_debug_map_sync (core->dbg);
 	rprj_maps_from_debug_list (cur, maps, core->dbg->maps);
 	rprj_maps_from_debug_list (cur, maps, core->dbg->maps_user);
-	if (r_list_empty (maps)) {
-		r_list_free (maps);
-		return NULL;
-	}
-	r_list_sort (maps, rprj_map_cmp);
-	rprj_maps_assign_order (maps);
-	return maps;
+	return rprj_maps_done (maps);
 }
 
 static bool rprj_json_get_ut64(const RJson *json, const char *key, ut64 *out) {
@@ -241,9 +219,9 @@ static void rprj_json_map_offset(const RJson *item, ut64 *pmin) {
 	}
 }
 
-static RList *rprj_maps_from_iosystem(RPrjCursor *cur) {
-	RCore *core = cur? cur->core: NULL;
-	if (!core || !core->io || !core->io->desc) {
+static RVecPrjMap *rprj_maps_from_iosystem(RPrjCursor *cur) {
+	RCore *core = cur->core;
+	if (!core->io->desc) {
 		return NULL;
 	}
 	char *json_text = r_io_system (core->io, "dmj");
@@ -257,11 +235,7 @@ static RList *rprj_maps_from_iosystem(RPrjCursor *cur) {
 		r_json_free (json);
 		return NULL;
 	}
-	RList *maps = r_list_newf ((RListFree)rprj_map_free);
-	if (!maps) {
-		r_json_free (json);
-		return NULL;
-	}
+	RVecPrjMap *maps = RVecPrjMap_new ();
 	size_t i;
 	for (i = 0; i < json->children.count; i++) {
 		const RJson *item = r_json_item (json, i);
@@ -286,29 +260,16 @@ static RList *rprj_maps_from_iosystem(RPrjCursor *cur) {
 			R_STR_ISNOTEMPTY (perm)? r_str_rwx (perm): -1);
 	}
 	r_json_free (json);
-	if (r_list_empty (maps)) {
-		r_list_free (maps);
-		return NULL;
-	}
-	r_list_sort (maps, rprj_map_cmp);
-	rprj_maps_assign_order (maps);
-	return maps;
+	return rprj_maps_done (maps);
 }
 
-static RList *rprj_maps_from_io(RPrjCursor *cur) {
-	RCore *core = cur? cur->core: NULL;
-	if (!core || !core->io) {
-		return NULL;
-	}
-	RList *maps = r_list_newf ((RListFree)rprj_map_free);
-	if (!maps) {
-		return NULL;
-	}
+static RVecPrjMap *rprj_maps_from_io(RPrjCursor *cur) {
+	RCore *core = cur->core;
+	RVecPrjMap *maps = RVecPrjMap_new ();
 	RIDStorage *storage = &core->io->maps;
 	ut32 mapid;
 	if (!r_id_storage_get_lowest (storage, &mapid)) {
-		r_list_free (maps);
-		return NULL;
+		return rprj_maps_done (maps);
 	}
 	do {
 		RIOMap *m = r_id_storage_get (storage, mapid);
@@ -323,17 +284,11 @@ static RList *rprj_maps_from_io(RPrjCursor *cur) {
 		const char *file = r_io_fd_get_name (core->io, m->fd);
 		rprj_map_add (cur, maps, r_str_get (m->name), file, pa, pa_end, va, va_end, m->perm);
 	} while (r_id_storage_get_next (storage, &mapid));
-	if (r_list_empty (maps)) {
-		r_list_free (maps);
-		return NULL;
-	}
-	r_list_sort (maps, rprj_map_cmp);
-	rprj_maps_assign_order (maps);
-	return maps;
+	return rprj_maps_done (maps);
 }
 
-static RList *rprj_maps_current(RPrjCursor *cur) {
-	RList *maps = rprj_maps_from_debug (cur);
+static RVecPrjMap *rprj_maps_current(RPrjCursor *cur) {
+	RVecPrjMap *maps = rprj_maps_from_debug (cur);
 	if (maps) {
 		return maps;
 	}
@@ -344,11 +299,10 @@ static RList *rprj_maps_current(RPrjCursor *cur) {
 	return rprj_maps_from_io (cur);
 }
 
-static R2ProjectMod *rprj_find_mod(RPrjCursor *cur, ut64 addr, ut32 *mid) {
-	RListIter *iter;
+static R2ProjectMod *rprj_mod_find(RPrjCursor *cur, ut64 addr, ut32 *mid) {
 	ut32 id = 0;
 	R2ProjectMod *mod;
-	r_list_foreach (cur->mods, iter, mod) {
+	R_VEC_FOREACH (&cur->mods, mod) {
 		if (addr >= mod->vmin && addr <= mod->vmax) {
 			*mid = id;
 			return mod;
@@ -358,20 +312,20 @@ static R2ProjectMod *rprj_find_mod(RPrjCursor *cur, ut64 addr, ut32 *mid) {
 	return NULL;
 }
 
-static R2ProjectMod *rprj_mod_by_id(RPrjCursor *cur, ut32 id) {
+static R2ProjectMod *rprj_mod_get(RPrjCursor *cur, ut32 id) {
 	if (id == UT32_MAX) {
 		return NULL;
 	}
-	return (R2ProjectMod *)r_list_get_n (cur->mods, id);
+	return RVecPrjMod_at (&cur->mods, id);
 }
 
-static R2ProjectAddr rprj_addr_to_project(RPrjCursor *cur, ut64 addr) {
+static R2ProjectAddr rprj_mod_addr(RPrjCursor *cur, ut64 addr) {
 	R2ProjectAddr res = {
 		.mod = UT32_MAX,
 		.delta = addr,
 	};
 	ut32 mid = UT32_MAX;
-	R2ProjectMod *mod = rprj_find_mod (cur, addr, &mid);
+	R2ProjectMod *mod = rprj_mod_find (cur, addr, &mid);
 	if (mod) {
 		res.mod = mid;
 		res.delta = addr - mod->vmin;
@@ -379,7 +333,7 @@ static R2ProjectAddr rprj_addr_to_project(RPrjCursor *cur, ut64 addr) {
 	return res;
 }
 
-static bool rprj_project_addr_to_va(RPrjCursor *cur, R2ProjectAddr *addr, ut64 *va) {
+static bool rprj_mod_va(RPrjCursor *cur, R2ProjectAddr *addr, ut64 *va) {
 	if (addr->mod == UT32_MAX && addr->delta == UT64_MAX) {
 		*va = UT64_MAX;
 		return true;
@@ -388,7 +342,7 @@ static bool rprj_project_addr_to_va(RPrjCursor *cur, R2ProjectAddr *addr, ut64 *
 		*va = addr->delta;
 		return true;
 	}
-	R2ProjectMod *mod = rprj_mod_by_id (cur, addr->mod);
+	R2ProjectMod *mod = rprj_mod_get (cur, addr->mod);
 	if (!mod) {
 		return false;
 	}
@@ -399,8 +353,90 @@ static bool rprj_project_addr_to_va(RPrjCursor *cur, R2ProjectAddr *addr, ut64 *
 	return true;
 }
 
+static bool rprj_map_read(RBuffer *b, R2ProjectMap *map) {
+	ut8 buf[RPRJ_MAP_SIZE];
+	if (!rprj_read_exact (b, buf, sizeof (buf))) {
+		return false;
+	}
+	map->name = r_read_le32 (buf + r_offsetof (R2ProjectMap, name));
+	map->uri = r_read_le32 (buf + r_offsetof (R2ProjectMap, uri));
+	map->pmin = r_read_le64 (buf + r_offsetof (R2ProjectMap, pmin));
+	map->pmax = r_read_le64 (buf + r_offsetof (R2ProjectMap, pmax));
+	map->vmin = r_read_le64 (buf + r_offsetof (R2ProjectMap, vmin));
+	map->vmax = r_read_le64 (buf + r_offsetof (R2ProjectMap, vmax));
+	map->perm = r_read_le32 (buf + r_offsetof (R2ProjectMap, perm));
+	return true;
+}
+
+static void rprj_map_write_one(RBuffer *b, R2ProjectMap *map) {
+	ut8 buf[RPRJ_MAP_SIZE] = {0};
+	r_write_le32 (buf + r_offsetof (R2ProjectMap, name), map->name);
+	r_write_le32 (buf + r_offsetof (R2ProjectMap, uri), map->uri);
+	r_write_le64 (buf + r_offsetof (R2ProjectMap, pmin), map->pmin);
+	r_write_le64 (buf + r_offsetof (R2ProjectMap, pmax), map->pmax);
+	r_write_le64 (buf + r_offsetof (R2ProjectMap, vmin), map->vmin);
+	r_write_le64 (buf + r_offsetof (R2ProjectMap, vmax), map->vmax);
+	r_write_le32 (buf + r_offsetof (R2ProjectMap, perm), map->perm);
+	r_buf_write (b, buf, sizeof (buf));
+}
+
+static void rprj_maps_write(RPrjCursor *cur, RVecPrjMap *maps) {
+	if (!maps) {
+		return;
+	}
+	RCore *core = cur->core;
+	const char *fallback_uri = core->io->desc? core->io->desc->uri: NULL;
+	RPrjMap *map;
+	R_VEC_FOREACH (maps, map) {
+		const char *uri = R_STR_ISNOTEMPTY (map->file)? map->file: fallback_uri;
+		if (R_STR_ISEMPTY (uri)) {
+			continue;
+		}
+		R2ProjectMap pmap = {
+			.name = R_STR_ISNOTEMPTY (map->name)? rprj_st_append (cur->st, map->name): UT32_MAX,
+			.uri = rprj_st_append (cur->st, uri),
+			.pmin = map->pmin,
+			.pmax = map->pmax,
+			.vmin = map->vmin,
+			.vmax = map->vmax,
+			.perm = (ut32)map->perm,
+		};
+		rprj_map_write_one (cur->b, &pmap);
+	}
+}
+
+static void rprj_maps_restore(RPrjCursor *cur) {
+	RCore *core = cur->core;
+	RBuffer *b = cur->b;
+	const ut64 end = r_buf_size (b);
+	while (r_buf_at (b) + RPRJ_MAP_SIZE <= end) {
+		R2ProjectMap map;
+		if (!rprj_map_read (b, &map) || map.vmax < map.vmin || map.pmax < map.pmin) {
+			break;
+		}
+		const char *uri = rprj_st_get (cur->st, map.uri);
+		if (!uri) {
+			continue;
+		}
+		const int perm = map.perm & R_PERM_RWX;
+		RIODesc *d = r_io_desc_get_byuri (core->io, uri);
+		if (!d) {
+			d = r_io_open_nomap (core->io, uri, perm? perm: R_PERM_R, 0644);
+		}
+		if (!d) {
+			continue;
+		}
+		RIOMap *m = r_io_map_add (core->io, d->fd, perm? perm: d->perm, map.pmin, map.vmin, rprj_range_size (map.vmin, map.vmax));
+		const char *name = rprj_st_get (cur->st, map.name);
+		if (m && R_STR_ISNOTEMPTY (name)) {
+			r_io_map_set_name (m, name);
+		}
+		r_io_use_fd (core->io, d->fd);
+	}
+}
+
 static bool rprj_mods_read(RBuffer *b, R2ProjectMod *mod) {
-	ut8 buf[sizeof (R2ProjectMod)];
+	ut8 buf[RPRJ_MOD_SIZE];
 	if (!rprj_read_exact (b, buf, sizeof (buf))) {
 		return false;
 	}
@@ -415,7 +451,7 @@ static bool rprj_mods_read(RBuffer *b, R2ProjectMod *mod) {
 }
 
 static void rprj_mods_write_one(RBuffer *b, R2ProjectMod *mod) {
-	ut8 buf[sizeof (R2ProjectMod)] = {0};
+	ut8 buf[RPRJ_MOD_SIZE] = {0};
 	r_write_le32 (buf + r_offsetof (R2ProjectMod, name), mod->name);
 	r_write_le32 (buf + r_offsetof (R2ProjectMod, file), mod->file);
 	r_write_le64 (buf + r_offsetof (R2ProjectMod, pmin), mod->pmin);
@@ -426,14 +462,12 @@ static void rprj_mods_write_one(RBuffer *b, R2ProjectMod *mod) {
 	r_buf_write (b, buf, sizeof (buf));
 }
 
-static void rprj_mods_write(RPrjCursor *cur) {
-	RList *maps = rprj_maps_current (cur);
+static void rprj_mods_write(RPrjCursor *cur, RVecPrjMap *maps) {
 	if (!maps) {
 		return;
 	}
-	RListIter *iter;
 	RPrjMap *map;
-	r_list_foreach (maps, iter, map) {
+	R_VEC_FOREACH (maps, map) {
 		R2ProjectMod mod = {
 			.name = rprj_st_append (cur->st, r_str_get (map->name)),
 			.file = R_STR_ISNOTEMPTY (map->file)? rprj_st_append (cur->st, map->file): UT32_MAX,
@@ -444,9 +478,11 @@ static void rprj_mods_write(RPrjCursor *cur) {
 			.csum = map->csum,
 		};
 		rprj_mods_write_one (cur->b, &mod);
-		r_list_append (cur->mods, r_mem_dup (&mod, sizeof (mod)));
+		R2ProjectMod *slot = RVecPrjMod_emplace_back (&cur->mods);
+		if (slot) {
+			*slot = mod;
+		}
 	}
-	r_list_free (maps);
 }
 
 static int rprj_mod_slot_cmp(const void *a, const void *b) {
@@ -498,14 +534,14 @@ static int rprj_mod_name_score(const char *a, const char *b, int exact, int base
 	return !strcmp (r_file_basename (a), r_file_basename (b))? base: 0;
 }
 
-static int rprj_mod_neighbor_score(RPrjCursor *cur, RPrjModSlot *mods, int nmods, RPrjMap **maps, int nmaps, int mi, int ci, int dir) {
+static int rprj_mod_neighbor_score(RPrjCursor *cur, RPrjModSlot *mods, int nmods, RVecPrjMap *maps, int nmaps, int mi, int ci, int dir) {
 	const int smi = mi + dir;
 	const int cmi = ci + dir;
 	if (smi < 0 || smi >= nmods || cmi < 0 || cmi >= nmaps) {
 		return smi == cmi? 5: 0;
 	}
 	R2ProjectMod *mod = mods[smi].mod;
-	RPrjMap *map = maps[cmi];
+	RPrjMap *map = RVecPrjMap_at (maps, cmi);
 	int score = 0;
 	if (mod->csum && mod->csum == map->csum) {
 		score += 35;
@@ -517,9 +553,9 @@ static int rprj_mod_neighbor_score(RPrjCursor *cur, RPrjModSlot *mods, int nmods
 	return score;
 }
 
-static int rprj_mod_match_score(RPrjCursor *cur, RPrjModSlot *mods, int nmods, RPrjMap **maps, int nmaps, int mi, int ci) {
+static int rprj_mod_match_score(RPrjCursor *cur, RPrjModSlot *mods, int nmods, RVecPrjMap *maps, int nmaps, int mi, int ci) {
 	R2ProjectMod *mod = mods[mi].mod;
-	RPrjMap *map = maps[ci];
+	RPrjMap *map = RVecPrjMap_at (maps, ci);
 	int score = 0;
 	if (mod->csum && mod->csum == map->csum) {
 		score += 100;
@@ -540,7 +576,7 @@ static int rprj_mod_match_score(RPrjCursor *cur, RPrjModSlot *mods, int nmods, R
 }
 
 static RPrjModSlot *rprj_mod_slots(RPrjCursor *cur, int *count) {
-	const int nmods = r_list_length (cur->mods);
+	const int nmods = (int)RVecPrjMod_length (&cur->mods);
 	*count = nmods;
 	if (nmods < 1) {
 		return NULL;
@@ -549,10 +585,9 @@ static RPrjModSlot *rprj_mod_slots(RPrjCursor *cur, int *count) {
 	if (!mods) {
 		return NULL;
 	}
-	RListIter *iter;
 	R2ProjectMod *mod;
 	int i = 0;
-	r_list_foreach (cur->mods, iter, mod) {
+	R_VEC_FOREACH (&cur->mods, mod) {
 		mods[i].mod = mod;
 		mods[i].id = i;
 		i++;
@@ -564,26 +599,7 @@ static RPrjModSlot *rprj_mod_slots(RPrjCursor *cur, int *count) {
 	return mods;
 }
 
-static RPrjMap **rprj_map_array(RList *maps, int *count) {
-	const int nmaps = r_list_length (maps);
-	*count = nmaps;
-	if (nmaps < 1) {
-		return NULL;
-	}
-	RPrjMap **array = R_NEWS0 (RPrjMap *, nmaps);
-	if (!array) {
-		return NULL;
-	}
-	RListIter *iter;
-	RPrjMap *map;
-	int i = 0;
-	r_list_foreach (maps, iter, map) {
-		array[i++] = map;
-	}
-	return array;
-}
-
-static RPrjModMatch *rprj_mod_matches(RPrjCursor *cur, RPrjModSlot *mods, int nmods, RPrjMap **maps, int nmaps, int *count) {
+static RPrjModMatch *rprj_mod_matches(RPrjCursor *cur, RPrjModSlot *mods, int nmods, RVecPrjMap *maps, int nmaps, int *count) {
 	*count = 0;
 	if (nmods < 1 || nmaps < 1) {
 		return NULL;
@@ -624,27 +640,25 @@ static void rprj_mod_apply_map(R2ProjectMod *mod, RPrjMap *map) {
 }
 
 static void rprj_mods_rebase(RPrjCursor *cur) {
-	RList *maps = rprj_maps_current (cur);
+	RVecPrjMap *maps = rprj_maps_current (cur);
 	if (!maps) {
 		return;
 	}
 	int nmods = 0;
 	RPrjModSlot *mods = rprj_mod_slots (cur, &nmods);
-	int nmaps = 0;
-	RPrjMap **map_array = rprj_map_array (maps, &nmaps);
-	if (!mods || !map_array) {
+	const int nmaps = (int)RVecPrjMap_length (maps);
+	if (!mods || nmaps < 1) {
 		free (mods);
-		free (map_array);
-		r_list_free (maps);
+		RVecPrjMap_free (maps);
 		return;
 	}
 	int nmatches = 0;
-	RPrjModMatch *matches = rprj_mod_matches (cur, mods, nmods, map_array, nmaps, &nmatches);
+	RPrjModMatch *matches = rprj_mod_matches (cur, mods, nmods, maps, nmaps, &nmatches);
 	int i;
 	for (i = 0; i < nmatches; i++) {
 		RPrjModMatch *match = matches + i;
 		RPrjModSlot *mod = mods + match->mod_order;
-		RPrjMap *map = map_array[match->map_order];
+		RPrjMap *map = RVecPrjMap_at (maps, match->map_order);
 		if (mod->matched || map->used) {
 			continue;
 		}
@@ -654,6 +668,5 @@ static void rprj_mods_rebase(RPrjCursor *cur) {
 	}
 	free (matches);
 	free (mods);
-	free (map_array);
-	r_list_free (maps);
+	RVecPrjMap_free (maps);
 }
