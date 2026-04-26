@@ -380,7 +380,8 @@ static void rprj_map_write_one(RBuffer *b, R2ProjectMap *map) {
 	r_buf_write (b, buf, sizeof (buf));
 }
 
-static void rprj_maps_write(RPrjCursor *cur, RVecPrjMap *maps) {
+static void rprj_maps_write(RPrjCursor *cur) {
+	RVecPrjMap *maps = cur->maps;
 	if (!maps) {
 		return;
 	}
@@ -462,7 +463,8 @@ static void rprj_mods_write_one(RBuffer *b, R2ProjectMod *mod) {
 	r_buf_write (b, buf, sizeof (buf));
 }
 
-static void rprj_mods_write(RPrjCursor *cur, RVecPrjMap *maps) {
+static void rprj_mods_write(RPrjCursor *cur) {
+	RVecPrjMap *maps = cur->maps;
 	if (!maps) {
 		return;
 	}

@@ -200,7 +200,9 @@ typedef struct {
 	RCore *core;
 	R2ProjectStringTable *st;
 	RBuffer *b;
+	RStrBuf *out;
 	RVecPrjMod mods;
+	RVecPrjMap *maps;
 } RPrjCursor;
 
 typedef struct {
@@ -231,10 +233,6 @@ typedef struct {
 	bool has_color;
 	bool seen;
 } R2ProjectDiffBlock;
-
-typedef struct {
-	ut64 addr;
-} R2ProjectDiffFunction;
 
 typedef struct {
 	ut64 addr;
@@ -289,16 +287,15 @@ static void rprj_entry_end(RBuffer *b, ut64 at);
 static bool rprj_string_read(RBuffer *b, ut64 next_entry, char **s);
 static bool rprj_map_read(RBuffer *b, R2ProjectMap *map);
 static RVecPrjMap *rprj_maps_current(RPrjCursor *cur);
-static void rprj_maps_write(RPrjCursor *cur, RVecPrjMap *maps);
+static void rprj_maps_write(RPrjCursor *cur);
 static void rprj_maps_restore(RPrjCursor *cur);
 static bool rprj_mods_read(RBuffer *b, R2ProjectMod *mod);
 static void rprj_mods_write_one(RBuffer *b, R2ProjectMod *mod);
-static void rprj_mods_write(RPrjCursor *cur, RVecPrjMap *maps);
+static void rprj_mods_write(RPrjCursor *cur);
 static void rprj_mods_rebase(RPrjCursor *cur);
 static bool rprj_info_read(RBuffer *b, R2ProjectInfo *info);
 
-static void r_core_newprj_save(RCore *core, const char *file);
-static void r_core_newprj_load(RCore *core, const char *file, int mode);
-static void r_core_newprj_open(RCore *core, const char *file);
+static bool r_core_newprj_save(RCore *core, const char *file);
+static char *r_core_newprj_load(RCore *core, const char *file, int mode);
 
 #endif
