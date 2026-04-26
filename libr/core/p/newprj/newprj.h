@@ -243,7 +243,7 @@ static bool rprj_string_read(RBuffer *b, ut64 next_entry, char **s);
 static bool rprj_mods_read(RBuffer *b, R2ProjectMod *mod);
 static void rprj_mods_write_one(RBuffer *b, R2ProjectMod *mod);
 static void rprj_mods_write(RPrjCursor *cur);
-static RIOMap *rprj_coremod(RPrjCursor *cur, R2ProjectMod *mod);
+static void rprj_mods_rebase(RPrjCursor *cur);
 static bool rprj_info_read(RBuffer *b, R2ProjectInfo *info);
 
 static void r_core_newprj_save(RCore *core, const char *file);

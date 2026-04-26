@@ -1011,15 +1011,7 @@ static void r_core_newprj_load(RCore *core, const char *file, int mode) {
 			r_list_append (cur.mods, r_mem_dup (&mod, sizeof (mod)));
 			n += sizeof (mod);
 		}
-		RListIter *iter;
-		R2ProjectMod *mod;
-		r_list_foreach (cur.mods, iter, mod) {
-			RIOMap *map = rprj_coremod (&cur, mod);
-			if (map) {
-				mod->vmin = r_io_map_from (map);
-				mod->vmax = r_io_map_to (map);
-			}
-		}
+		rprj_mods_rebase (&cur);
 	}
 
 	R2ProjectEntry entry;

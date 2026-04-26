@@ -7,6 +7,7 @@
 #include <r_core.h>
 #include "newprj/newprj.h"
 #include "newprj/format.inc.c"
+#include "newprj/maps.inc.c"
 #include "newprj/save.inc.c"
 #include "newprj/load.inc.c"
 

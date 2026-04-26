@@ -336,6 +336,75 @@ EXPECT=<<EOF
 EOF
 RUN
 
+NAME=newprj duplicate identical maps rebase one to one
+FILE=malloc://0x10
+CMDS=<<EOF
+mkdir .tmp
+rm -f .tmp/newprj-dupmap.prj
+!printf AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA > .tmp/newprj-dupmap.bin
+o--
+o .tmp/newprj-dupmap.bin 0x1000
+o .tmp/newprj-dupmap.bin 0x4000
+f first.dup=0x1010
+f second.dup=0x4010
+axd 0x4010 0x1010
+prj save .tmp/newprj-dupmap.prj > /dev/null
+f-*
+ax-*
+o--
+o .tmp/newprj-dupmap.bin 0x8000
+o .tmp/newprj-dupmap.bin 0xc000
+prj load .tmp/newprj-dupmap.prj > /dev/null
+fd 0x8010
+fd 0xc010
+axq
+rm .tmp/newprj-dupmap.prj
+rm .tmp/newprj-dupmap.bin
+EOF
+EXPECT=<<EOF
+first.dup
+second.dup
+0x00008010 -> 0x0000c010  DATA:r--
+EOF
+RUN
+
+NAME=newprj ambiguous same-content maps keep sorted identity
+FILE=malloc://0x10
+CMDS=<<EOF
+mkdir .tmp
+rm -f .tmp/newprj-ambmap.prj
+!printf ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ > .tmp/newprj-amb-a.bin
+!printf AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA > .tmp/newprj-amb-b.bin
+!printf ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ > .tmp/newprj-amb-c.bin
+o--
+o .tmp/newprj-amb-a.bin 0x1000
+o .tmp/newprj-amb-b.bin 0x2000
+o .tmp/newprj-amb-c.bin 0x3000
+f first.same=0x1010
+f middle.unique=0x2010
+f second.same=0x3010
+prj save .tmp/newprj-ambmap.prj > /dev/null
+f-*
+o--
+o .tmp/newprj-amb-a.bin 0x8000
+o .tmp/newprj-amb-b.bin 0x9000
+o .tmp/newprj-amb-c.bin 0xa000
+prj load .tmp/newprj-ambmap.prj > /dev/null
+fd 0x8010
+fd 0x9010
+fd 0xa010
+rm .tmp/newprj-ambmap.prj
+rm .tmp/newprj-amb-a.bin
+rm .tmp/newprj-amb-b.bin
+rm .tmp/newprj-amb-c.bin
+EOF
+EXPECT=<<EOF
+first.same
+middle.unique
+second.same
+EOF
+RUN
+
 NAME=newprj function name updates existing function
 FILE=malloc://0x100
 CMDS=<<EOF
