@@ -385,6 +385,34 @@ bool test_sandbox_localhost(void) {
 	mu_end;
 }
 
+bool test_sandbox_hidden_path(void) {
+	bool was_enabled = r_sandbox_enable (false);
+	int old_grain = r_sandbox_grain (R_SANDBOX_GRAIN_FILES);
+	r_sandbox_enable (true);
+
+	mu_assert_false (r_sandbox_check_path (".gitignore"), "hidden file should require hidden grain");
+	mu_assert_false (r_sandbox_check_path ("dir/.gitignore"), "hidden path component should require hidden grain");
+#if R2__WINDOWS__
+	mu_assert_false (r_sandbox_check_path ("dir\\.gitignore"), "hidden windows path component should require hidden grain");
+#endif
+	mu_assert_true (r_sandbox_check_path ("dir/gitignore"), "non-hidden path should be allowed");
+
+	r_sandbox_grain (R_SANDBOX_GRAIN_FILES | R_SANDBOX_GRAIN_HIDDEN);
+	mu_assert_true (r_sandbox_check_path (".gitignore"), "hidden grain should allow hidden file");
+	mu_assert_true (r_sandbox_check_path ("dir/.gitignore"), "hidden grain should allow hidden path component");
+#if R2__WINDOWS__
+	mu_assert_true (r_sandbox_check_path ("dir\\.gitignore"), "hidden grain should allow hidden windows path component");
+#endif
+	mu_assert_false (r_sandbox_check_path ("./gitignore"), "hidden grain should not allow ./ paths");
+	mu_assert_false (r_sandbox_check_path ("../gitignore"), "hidden grain should not allow ../ paths");
+
+	r_sandbox_grain (old_grain);
+	if (!was_enabled) {
+		r_sandbox_disable (true);
+	}
+	mu_end;
+}
+
 int all_tests(void) {
 	mu_run_test (test_ignore_prefixes);
 	mu_run_test (test_remove_r2_prefixes);
@@ -400,6 +428,7 @@ int all_tests(void) {
 	mu_run_test (test_endian_is);
 	mu_run_test (test_endian_roundtrip);
 	mu_run_test (test_sandbox_localhost);
+	mu_run_test (test_sandbox_hidden_path);
 	return tests_passed != tests_run;
 }
 

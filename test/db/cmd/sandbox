@@ -138,3 +138,14 @@ EXPECT=<<EOF
 exec
 EOF
 RUN
+
+NAME=sandbox grain=hidden option
+FILE=-
+CMDS=<<EOF
+e cfg.sandbox.grain=hidden
+e cfg.sandbox.grain
+EOF
+EXPECT=<<EOF
+hidden
+EOF
+RUN

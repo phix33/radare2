@@ -41,6 +41,21 @@ static bool inHomeWww(const char *path) {
 	return ret;
 }
 
+static bool is_hidden_path(const char *path) {
+	if (*path == '.') {
+		return true;
+	}
+	if (strstr (path, "/.")) {
+		return true;
+	}
+#if R2__WINDOWS__
+	if (strstr (path, "\\.")) {
+		return true;
+	}
+#endif
+	return false;
+}
+
 /**
  * This function verifies that the given path is allowed. Paths are allowed only if they don't
  * contain .. components (which would indicate directory traversal) and they are relative.
@@ -52,6 +67,9 @@ R_API bool r_sandbox_check_path(const char *path) {
 	size_t root_len;
 	char *p;
 	/* XXX: the sandbox can be bypassed if a directory is symlink */
+	if (G_enabled && !(G_graintype & R_SANDBOX_GRAIN_HIDDEN) && is_hidden_path (path)) {
+		return false;
+	}
 	root_len = strlen (R2_LIBDIR"/radare2");
 	if (!strncmp (path, R2_LIBDIR"/radare2", root_len)) {
 		return true;

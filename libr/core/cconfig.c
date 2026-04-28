@@ -1612,6 +1612,7 @@ static RCoreHelpMessage help_msg_grain = {
 	"socket", "", "allow socket creation, listening and socket state checks",
 	"network", "", "allow non-localhost network connections and HTTP requests",
 	"environ", "", "allow environment variable read, write, clear operations",
+	"hidden", "", "allow reading hidden files and directories",
 	NULL
 };
 // clang-format on
@@ -1645,6 +1646,9 @@ static bool cb_cfgsanbox_grain(void *user, void *data) {
 		}
 		if (strstr (node->value, "environ")) {
 			gt |= R_SANDBOX_GRAIN_ENVIRON;
+		}
+		if (strstr (node->value, "hidden")) {
+			gt |= R_SANDBOX_GRAIN_HIDDEN;
 		}
 	}
 	r_sandbox_grain (gt);
@@ -4349,7 +4353,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETB ("cfg.fortunes.tts", "false", "speak out the fortune");
 	SETS ("cfg.prefixdump", "dump", "filename prefix for automated dumps");
 	SETCB ("cfg.sandbox", "false", &cb_cfgsanbox, "sandbox mode disables systems and open on upper directories");
-	SETCB ("cfg.sandbox.grain", "all", &cb_cfgsanbox_grain, "select sandbox permissions to keep enabled (all, none, disk, files, exec, socket, network)");
+	SETCB ("cfg.sandbox.grain", "all", &cb_cfgsanbox_grain, "select sandbox permissions to keep enabled (all, none, disk, files, exec, socket, network, environ, hidden)");
 	SETB ("cfg.wseek", "false", "Seek after write");
 	SETCB ("cfg.bigendian", "false", &cb_bigendian, "use little (false) or big (true) endianness");
 	SETCB ("cfg.float", "ieee754", &cb_cfg_float, "FPU profile for floating point operations (use -e cfg.float=? for list)");
