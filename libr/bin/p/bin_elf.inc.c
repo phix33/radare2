@@ -667,12 +667,29 @@ static RBinReloc *reloc_convert(ELFOBJ* eo, RBinElfReloc *rel, ut64 got_addr) {
 		break;
 	case EM_PPC64:
 		switch (rel->type) {
-		case R_PPC64_JMP_SLOT:  // 21 - PLT slot; vaddr = r_offset (slot address)
+		case R_PPC64_JMP_SLOT:  // PLT slot; vaddr = r_offset
+		case R_PPC64_ADDR64:
 			SET (64);
-		case R_PPC64_ADDR64:    // 38 - absolute 64-bit address
-			SET (64);
-		case R_PPC64_RELATIVE:  // 22 - B + A; handled by dynamic linker at load time
+		case R_PPC64_RELATIVE:  // B + A, filled by dynamic linker
 			ADD (64, B);
+		case R_PPC64_ADDR32:
+			ADD (32, 0);
+		case R_PPC64_REL32:
+			ADD (32, -(st64)P);
+		case R_PPC64_REL24:
+			ADD (24, -(st64)P);
+		case R_PPC64_REL14:
+		case R_PPC64_REL16_HA:
+		case R_PPC64_REL16_LO:
+			ADD (16, -(st64)P);
+		case R_PPC64_TOC:       // points to .TOC. (no symbol)
+		case R_PPC64_TOC16:
+		case R_PPC64_TOC16_LO:
+		case R_PPC64_TOC16_HI:
+		case R_PPC64_TOC16_HA:
+		case R_PPC64_TOC16_DS:
+		case R_PPC64_TOC16_LO_DS:
+			ADD (16, 0);
 		default:
 			R_LOG_DEBUG ("Unimplemented ELF/PPC64 reloc type %d", rel->type);
 			break;
@@ -1106,36 +1123,35 @@ static void _patch_reloc(ELFOBJ *bo, ut16 e_machine, RIOBind *iob, RBinElfReloc 
 			V = B + A;
 			break;
 		default:
+			R_LOG_DEBUG ("unpatched PPC64 reloc type %d at 0x%"PFMT64x, rel->type, rel->rva);
 			break;
 		}
 		if (low) {
-			// TODO big-endian
 			switch (low) {
 			case 14:
 				V &= (1 << 14) - 1;
-				iob->read_at (iob->io, rel->rva, buf, 2);
-				r_write_le32 (buf, (r_read_le32 (buf) & ~((1<<16) - (1<<2))) | V << 2);
-				iob->overlay_write_at (iob->io, rel->rva, buf, 2);
+				iob->read_at (iob->io, rel->rva, buf, 4);
+				r_write_ble32 (buf, (r_read_ble32 (buf, bo->endian) & ~((1<<16) - (1<<2))) | V << 2, bo->endian);
+				iob->overlay_write_at (iob->io, rel->rva, buf, 4);
 				break;
 			case 24:
 				V &= (1 << 24) - 1;
 				iob->read_at (iob->io, rel->rva, buf, 4);
-				r_write_le32 (buf, (r_read_le32 (buf) & ~((1<<26) - (1<<2))) | V << 2);
+				r_write_ble32 (buf, (r_read_ble32 (buf, bo->endian) & ~((1<<26) - (1<<2))) | V << 2, bo->endian);
 				iob->overlay_write_at (iob->io, rel->rva, buf, 4);
 				break;
 			}
 		} else if (word) {
-			// TODO big-endian for word == 2, 4
 			switch (word) {
 			case 2:
-				r_write_le16 (buf, V);
+				r_write_ble16 (buf, V, bo->endian);
 				iob->overlay_write_at (iob->io, rel->rva, buf, 2);
 				break;
 			case 4:
-				r_write_le32 (buf, V);
+				r_write_ble32 (buf, V, bo->endian);
 				iob->overlay_write_at (iob->io, rel->rva, buf, 4);
 				break;
-			case 8: // ppc64be: big-endian 64-bit write
+			case 8:
 				r_write_ble64 (buf, V, bo->endian);
 				iob->overlay_write_at (iob->io, rel->rva, buf, 8);
 				break;
@@ -1484,7 +1500,13 @@ static RList* patch_relocs(RBinFile *bf) {
 		}
 
 		if (sym_addr && sym_addr != UT64_MAX) {
-			ptr->vaddr = sym_addr;
+			// PPC64 ET_REL only: S + A so multiple .rela.opd entries don't
+			// collapse onto the section base. Other architectures emit ET_REL
+			// relocs against section symbols + addend on every reference, and
+			// folding A in would alias ptr->vaddr onto unrelated instruction
+			// addresses (showing up as phantom RELOC comments mid-function).
+			const bool ppc64_etrel = eo->ehdr.e_type == ET_REL && eo->ehdr.e_machine == EM_PPC64;
+			ptr->vaddr = ppc64_etrel ? sym_addr + reloc->addend : sym_addr;
 		} else {
 			// In sBPF, symbol relocations are handled independently as R_BPF_64_64
 			if (eo->ehdr.e_machine != EM_SBPF) {

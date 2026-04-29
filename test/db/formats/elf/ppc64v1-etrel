@@ -1,0 +1,145 @@
+NAME=PPC64 ELFv1 ET_REL kernel module recognized as ppc64 big-endian
+FILE=bins/elf/ppc64v1-crc32_generic.ko
+CMDS=iI~arch ;iI~bits ;iI~class ;iI~endian
+EXPECT=<<EOF
+arch     ppc
+bits     64
+class    ELF64
+endian   big
+EOF
+RUN
+
+NAME=PPC64 ELFv1 ET_REL: R_PPC64_REL24 maps to ADD_24
+FILE=bins/elf/ppc64v1-crc32_generic.ko
+CMDS=ir~?ADD_24
+EXPECT=<<EOF
+10
+EOF
+RUN
+
+NAME=PPC64 ELFv1 ET_REL: REL24 reloc encodes -(st64)P addend (S - P + A convention)
+FILE=bins/elf/ppc64v1-crc32_generic.ko
+CMDS=ir~ADD_24:0
+EXPECT=<<EOF
+0x080000c4 0x000000c4 ADD_24 10    ._mcount - 0x080000c4
+EOF
+RUN
+
+NAME=PPC64 ELFv1 ET_REL: REL24 unique target imports
+FILE=bins/elf/ppc64v1-crc32_generic.ko
+CMDS=ir~ADD_24[4]
+EXPECT=<<EOF
+._mcount
+._mcount
+._mcount
+._mcount
+._mcount
+.crc32_le
+._mcount
+.crc32_le
+._mcount
+.crc32_le
+EOF
+RUN
+
+NAME=PPC64 ELFv1 ET_REL: R_PPC64_TOC maps to ADD_16 (TOC base reloc)
+FILE=bins/elf/ppc64v1-crc32_generic.ko
+CMDS=ir~?ADD_16
+EXPECT=<<EOF
+5
+EOF
+RUN
+
+NAME=PPC64 ELFv1 ET_REL: R_PPC64_ADDR64 in .opd produces SET_64 entries
+FILE=bins/elf/ppc64v1-crc32_generic.ko
+CMDS=ir~?SET_64
+EXPECT=<<EOF
+6
+EOF
+RUN
+
+NAME=PPC64 ELFv1 ET_REL: .opd ADDR64 relocs resolve to distinct vaddrs (S + A, not collapsed)
+FILE=bins/elf/ppc64v1-crc32_generic.ko
+ARGS=-e bin.relocs.apply=true
+CMDS=ir~SET_64[0]
+EXPECT=<<EOF
+0x080000b0
+0x080000f0
+0x08000130
+0x080001a0
+0x080001f0
+0x08000358
+EOF
+RUN
+
+NAME=PPC64 ELFv1 ET_REL: REL24 call site patched big-endian (bl mnemonic preserved)
+FILE=bins/elf/ppc64v1-crc32_generic.ko
+ARGS=-e bin.relocs.apply=true
+CMDS=pi 1 @ 0x080000c4;pi 1 @ 0x08000234
+EXPECT=<<EOF
+bl ._mcount
+bl .crc32_le
+EOF
+RUN
+
+NAME=PPC64 ELFv1 ET_REL: REL24 patched bytes are big-endian (high byte first)
+FILE=bins/elf/ppc64v1-crc32_generic.ko
+ARGS=-e bin.relocs.apply=true
+CMDS=p8 4 @ 0x080000c4
+EXPECT=<<EOF
+48001b69
+EOF
+RUN
+
+NAME=PPC64 ELFv1 ET_REL: imports include _mcount and crc32_le
+FILE=bins/elf/ppc64v1-crc32_generic.ko
+CMDS=ii~mcount,crc32[4]
+EXPECT=<<EOF
+._mcount
+.crc32_le
+_mcount
+EOF
+RUN
+
+NAME=PPC64 ELFv1 ET_REL: 10 .rela sections present
+FILE=bins/elf/ppc64v1-crc32_generic.ko
+CMDS=iS~?RELA
+EXPECT=<<EOF
+10
+EOF
+RUN
+
+NAME=PPC64 ELFv1 (regression): shared lib JMP_SLOT vaddr unchanged by ET_REL gating
+FILE=bins/elf/ppc64v1-libz.so
+ARGS=-e bin.relocs.apply=true
+CMDS=ir~strlen[0]
+EXPECT=<<EOF
+0x000304d8
+EOF
+RUN
+
+NAME=aarch64 ET_DYN (regression): reloc count unchanged by ET_REL gating
+FILE=bins/elf/ls-toybox
+CMDS=ir~?
+EXPECT=<<EOF
+331
+EOF
+RUN
+
+NAME=aarch64 ET_REL (regression): section-symbol relocs collapse to base, not S + A
+FILE=bins/elf/random_39855/random_39855.oo
+ARGS=-e bin.relocs.apply=true
+CMDS=ir~ADD_32[0]|sort -u
+EXPECT=<<EOF
+0x08000040
+0x080057dc
+0x080057f0
+0x080057f4
+0x080057f8
+0x08005960
+0x08005978
+0x08005988
+0x08012677
+0x0801267f
+EOF
+RUN
