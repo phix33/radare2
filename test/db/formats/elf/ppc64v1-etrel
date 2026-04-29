@@ -125,3 +125,21 @@ EXPECT=<<EOF
 331
 EOF
 RUN
+
+NAME=aarch64 ET_REL (regression): section-symbol relocs collapse to base, not S + A
+FILE=bins/elf/random_39855/random_39855.oo
+ARGS=-e bin.relocs.apply=true
+CMDS=ir~ADD_32[0]|sort -u
+EXPECT=<<EOF
+0x08000040
+0x080057dc
+0x080057f0
+0x080057f4
+0x080057f8
+0x08005960
+0x08005978
+0x08005988
+0x08012677
+0x0801267f
+EOF
+RUN
