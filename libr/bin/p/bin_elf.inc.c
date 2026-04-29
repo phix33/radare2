@@ -1500,8 +1500,13 @@ static RList* patch_relocs(RBinFile *bf) {
 		}
 
 		if (sym_addr && sym_addr != UT64_MAX) {
-			// ET_REL only: S + A so multiple .rela.opd entries don't collapse onto the section base.
-			ptr->vaddr = (eo->ehdr.e_type == ET_REL) ? sym_addr + reloc->addend : sym_addr;
+			// PPC64 ET_REL only: S + A so multiple .rela.opd entries don't
+			// collapse onto the section base. Other architectures emit ET_REL
+			// relocs against section symbols + addend on every reference, and
+			// folding A in would alias ptr->vaddr onto unrelated instruction
+			// addresses (showing up as phantom RELOC comments mid-function).
+			const bool ppc64_etrel = eo->ehdr.e_type == ET_REL && eo->ehdr.e_machine == EM_PPC64;
+			ptr->vaddr = ppc64_etrel ? sym_addr + reloc->addend : sym_addr;
 		} else {
 			// In sBPF, symbol relocations are handled independently as R_BPF_64_64
 			if (eo->ehdr.e_machine != EM_SBPF) {
