@@ -154,6 +154,126 @@ static int fcn_type_stack_pop(RAnal *anal, const char *cc, const char *callee, i
 	return pop;
 }
 
+#define STUB_MAX_DEPTH 3
+#define STUB_MIN_SIZE 4
+#define STUB_MAX_SIZE 64
+
+static bool writes_arg_reg(RAnal *anal, RAnalOp *op, const char *cc, int max_arg) {
+	RAnalValue *dst;
+	R_VEC_FOREACH (&op->dsts, dst) {
+		if (!dst->reg || dst->memref) {
+			continue;
+		}
+		// compare storage, not names, so writing dil or si still clobbers rdi and rsi
+		RRegItem *wr = r_reg_get (anal->reg, dst->reg, -1);
+		int i;
+		for (i = 0; i < max_arg; i++) {
+			const char *loc = r_anal_cc_argloc (anal, cc, i, 0, 0);
+			if (!loc) {
+				continue;
+			}
+			if (r_anal_cc_location_uses (anal, loc, dst->reg)) {
+				return true;
+			}
+			RRegItem *ar = wr? r_reg_get (anal->reg, loc, -1): NULL;
+			if (ar && ar->type == wr->type && ar->offset < wr->offset + wr->size
+					&& wr->offset < ar->offset + ar->size) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+// address of the terminal direct branch of a thunk-shaped function, 0 if it is not one
+static ut64 stub_tail_jump(RAnal *anal, RAnalFunction *f) {
+	const ut64 fsize = r_anal_function_linear_size (f);
+	if (fsize < STUB_MIN_SIZE || fsize > STUB_MAX_SIZE || !anal->iob.read_at) {
+		return 0;
+	}
+	const int size = (int)fsize;
+	ut8 buf[STUB_MAX_SIZE];
+	if (!anal->iob.read_at (anal->iob.io, f->addr, buf, size)) {
+		return 0;
+	}
+	const char *cc = r_anal_function_cc (f);
+	if (!cc) {
+		return 0;
+	}
+	const int max_arg = r_anal_cc_max_arg (anal, cc);
+	ut64 jump = 0;
+	int exits = 0;
+	int at = 0;
+	while (at < size) {
+		RAnalOp op;
+		r_anal_op_init (&op);
+		// never STATEFUL, the ppc toc tracker keys off that mask and this decode is out of band
+		const int len = r_anal_op (anal, &op, f->addr + at, buf + at, size - at, R_ARCH_OP_MASK_VAL);
+		const int type = op.type & R_ANAL_OP_TYPE_MASK;
+		const bool has_target = op.jump && op.jump != UT64_MAX;
+		// exact compare, CJMP is JMP|COND so masking would accept a conditional branch
+		const bool is_exit = op.type == R_ANAL_OP_TYPE_JMP && has_target;
+		// a second path out means the caller may reach a different callee than we picked
+		const bool forks = type == R_ANAL_OP_TYPE_RET
+			|| (op.type == R_ANAL_OP_TYPE_CJMP && has_target);
+		const bool is_call = r_anal_op_is_call (&op);
+		// a thunk that sets up arguments is not transparent, its callers pass nothing
+		const bool opaque = writes_arg_reg (anal, &op, cc, max_arg);
+		if (is_exit) {
+			exits++;
+			jump = op.jump;
+		}
+		r_anal_op_fini (&op);
+		if (len < 1 || is_call || opaque || forks || exits > 1) {
+			return 0;
+		}
+		at += len;
+		// the single direct exit has to be the last thing the thunk does
+		if (exits && at < size) {
+			return 0;
+		}
+	}
+	return jump;
+}
+
+// where a plt stub chain starting at addr ends up, 0 when addr does not reach one.
+// only the bin layer terminates the walk, so an ordinary tail-call thunk resolves to nothing
+R_IPI ut64 r_anal_stub_target(RAnal *anal, ut64 addr) {
+	R_RETURN_VAL_IF_FAIL (anal, 0);
+	if (!anal->binb.bin || !anal->binb.get_stub_target) {
+		return 0;
+	}
+	ut64 at = addr;
+	int depth;
+	for (depth = 0; depth < STUB_MAX_DEPTH; depth++) {
+		const ut64 target = anal->binb.get_stub_target (anal->binb.bin, at);
+		if (target && target != UT64_MAX && target != at) {
+			return target;
+		}
+		RAnalFunction *f = r_anal_get_function_at (anal, at);
+		if (!f) {
+			return 0;
+		}
+		const ut64 next = stub_tail_jump (anal, f);
+		if (!next || next == at || r_anal_function_contains (f, next)) {
+			return 0;
+		}
+		at = next;
+	}
+	return 0;
+}
+
+// import flags live in the core flag space, which anal reaches through either bind
+R_IPI RFlagItem *r_anal_import_flag_at(RAnal *anal, ut64 addr) {
+	RCore *core = anal->coreb.core;
+	RFlagItem *flag = (core && core->flags)
+		? r_flag_get_by_spaces (core->flags, false, addr, R_FLAGS_FS_IMPORTS, NULL): NULL;
+	if (!flag && anal->flb.f) {
+		flag = r_flag_get_by_spaces (anal->flb.f, false, addr, R_FLAGS_FS_IMPORTS, NULL);
+	}
+	return flag;
+}
+
 static char *fcn_call_type(RAnal *anal, RAnalOp *op, RAnalFunction **callee) {
 	ut64 offset = op->jump != UT64_MAX? op->jump: op->ptr;
 	if (offset == UT64_MAX) {
@@ -163,14 +283,7 @@ static char *fcn_call_type(RAnal *anal, RAnalOp *op, RAnalFunction **callee) {
 	if (*callee) {
 		return r_type_func_guess (anal->sdb_types, (*callee)->name);
 	}
-	RFlagItem *flag = NULL;
-	RCore *core = anal->coreb.core;
-	if (core && core->flags) {
-		flag = r_flag_get_by_spaces (core->flags, false, offset, R_FLAGS_FS_IMPORTS, NULL);
-	}
-	if (!flag && anal->flb.f) {
-		flag = r_flag_get_by_spaces (anal->flb.f, false, offset, R_FLAGS_FS_IMPORTS, NULL);
-	}
+	RFlagItem *flag = r_anal_import_flag_at (anal, offset);
 	return flag? r_type_func_guess (anal->sdb_types, flag->name): NULL;
 }
 

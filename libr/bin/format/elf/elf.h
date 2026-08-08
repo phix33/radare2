@@ -184,6 +184,8 @@ struct Elf_(obj_t) {
 	RList *inits;
 	HtUU *rel_cache;
 	HtUU *ppc64_plt_stubs; // ppc64: slot_vaddr -> stub_vaddr (lazy, NULL until first use)
+	HtUU *local_plt_targets; // plt stub_vaddr -> vaddr of the local function it forwards to
+	bool local_plt_loaded;
 	ut32 g_reloc_num;
 	bool relocs_loaded;
 	RVecRBinElfReloc g_relocs;
@@ -258,5 +260,6 @@ bool Elf_(has_nobtcfi)(ELFOBJ *eo);
 ut8 *Elf_(grab_regstate)(struct Elf_(obj_t) *bin, int *len);
 RList *Elf_(get_maps)(ELFOBJ *bin);
 ut64 Elf_(ppc64_get_plt_stub_for_slot)(ELFOBJ *eo, ut64 slot_vaddr);
+ut64 Elf_(get_plt_target)(ELFOBJ *eo, ut64 stub_vaddr);
 R_API RBinSection *r_bin_section_clone(RBinSection *s);
 #endif

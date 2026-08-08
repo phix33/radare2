@@ -727,6 +727,8 @@ typedef struct r_bin_plugin_t {
 	const char* (*get_name)(RBinFile *bf, int type, int idx, bool simplified);
 	// Optional per-function calling convention name for anal.cc=dyncc
 	const char *(*get_cc)(RBinFile *bf, ut64 vaddr);
+	// Optional: address a plt stub forwards to, UT64_MAX when vaddr is not a stub
+	ut64 (*stub_target)(RBinFile *bf, ut64 vaddr);
 	ut64 (*get_vaddr)(RBinFile *bf, ut64 baddr, ut64 paddr, ut64 vaddr);
 	RBuffer* (*create)(RBin *bin, const ut8 *code, int codelen, const ut8 *data, int datalen, RBinArchOptions *opt);
 	char* (*demangle)(const char *str);
@@ -864,12 +866,14 @@ typedef ut64 (*RBinBaddr)(RBinFile *bf, ut64 addr);
 typedef RVecRBinSymbol *(*RBinGetSymbolsVec)(RBin *bin);
 typedef RBinSymbol *(*RBinGetSymbolAt)(RBin *bin, ut64 addr);
 typedef const char *(*RBinGetCC)(RBin *bin, ut64 vaddr);
+typedef ut64 (*RBinGetStubTarget)(RBin *bin, ut64 vaddr);
 
 typedef struct r_bin_bind_t {
 	RBin *bin;
 	RBinGetOffset get_offset;
 	RBinGetName get_name;
 	RBinGetCC get_cc;
+	RBinGetStubTarget get_stub_target;
 	RBinGetSectionsVec get_sections_vec;
 	RBinGetSectionAt get_vsect_at;
 	RBinGetSymbolsVec get_symbols_vec;
