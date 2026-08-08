@@ -110,6 +110,7 @@ typedef struct Elf_(dynamic_info) {
 	Elf_(Xword) dt_mips_gotsym;
 	Elf_(Xword) dt_mips_symtabno;
 	Elf_(Addr) dt_ppc64_glink; /* PPC64 ELFv1: DT_PPC64_GLINK lazy PLT resolver anchor */
+	bool dt_aarch64_pac_plt; /* AArch64: -z pac-plt, grows the PLT entries to 24 bytes */
 	Elf_(Addr) dt_crel;    // Address of Crel relocs
 	bool dt_bind_now;
 	Elf_(Xword) dt_flags;
